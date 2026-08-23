@@ -70,6 +70,27 @@ name=value; another=value
 
 保存后先点击“测试连接”。搜索调用 M-Team 的 torrent search API；推送前，后端会调用 `genDlToken` 获取短期下载地址，再交给 qBittorrent。
 
+## 构建 Docker 镜像
+
+Windows PowerShell：
+
+```powershell
+.\scripts\build-image.ps1
+.\scripts\build-image.ps1 -Tag ghcr.io/example/movie-pilot-lite:0.1.0
+.\scripts\build-image.ps1 -Platform linux/amd64,linux/arm64 -Tag ghcr.io/example/movie-pilot-lite:0.1.0 -Push
+```
+
+Linux/macOS：
+
+```bash
+chmod +x scripts/build-image.sh
+./scripts/build-image.sh
+./scripts/build-image.sh --tag ghcr.io/example/movie-pilot-lite:0.1.0
+./scripts/build-image.sh --platform linux/amd64,linux/arm64 --tag ghcr.io/example/movie-pilot-lite:0.1.0 --push
+```
+
+默认使用 `docker buildx build` 并将单平台镜像加载到本地 Docker。使用 `--push` 时，目标 tag 必须是当前账号有权限写入的镜像仓库；多平台构建必须使用 `--push`。
+
 ## qBittorrent 配置
 
 填写 qBittorrent Web UI 地址，例如 `http://qbittorrent:8080`。认证支持：
