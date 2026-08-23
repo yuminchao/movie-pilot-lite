@@ -78,9 +78,40 @@ class MTeamClient:
         except (httpx.HTTPError, ValueError, TypeError) as error:
             raise IntegrationError("M-Team 搜索失败") from error
 
+    def test_connection(self) -> None:
+        """调用用户资料接口验证站点凭据。"""
+        try:
+            response = httpx.post(
+                f"{self._api_url}/api/member/profile",
+                headers=self._headers,
+                timeout=self._timeout,
+            )
+            response.raise_for_status()
+            if not response.json().get("data"):
+                raise IntegrationError("M-Team 认证无效")
+        except IntegrationError:
+            raise
+        except (httpx.HTTPError, ValueError, TypeError) as error:
+            raise IntegrationError("M-Team 连接失败") from error
+
     def get_download_url(self, source_id: str) -> str:
-        """生成供 qBittorrent 使用的 M-Team 临时下载描述。"""
-        return f"{self._api_url}/api/torrent/genDlToken?id={source_id}"
+        """调用 M-Team 接口生成供 qBittorrent 使用的临时下载地址。"""
+        try:
+            response = httpx.post(
+                f"{self._api_url}/api/torrent/genDlToken",
+                headers=self._headers,
+                params={"id": source_id},
+                timeout=self._timeout,
+            )
+            response.raise_for_status()
+            url = response.json().get("data")
+            if not isinstance(url, str) or not url.startswith(("http://", "https://")):
+                raise IntegrationError("M-Team 未返回有效下载地址")
+            return url
+        except IntegrationError:
+            raise
+        except (httpx.HTTPError, ValueError, TypeError) as error:
+            raise IntegrationError("M-Team 下载地址生成失败") from error
 
     def _parse_result(self, item: dict) -> SearchResult:
         status = item.get("status") or {}
@@ -148,4 +179,3 @@ class MTeamClient:
     @staticmethod
     def _upload_factor(discount: str | None) -> float:
         return 2.0 if discount in {"_2X", "_2X_FREE", "_2X_PERCENT_50"} else 1.0
-

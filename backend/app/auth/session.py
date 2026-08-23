@@ -1,4 +1,5 @@
 import secrets
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import func, select
@@ -19,8 +20,13 @@ def _as_utc(value: datetime) -> datetime:
 class AuthService:
     """管理单一管理员账户和服务端会话。"""
 
-    def __init__(self, database: Database) -> None:
+    def __init__(
+        self,
+        database: Database,
+        on_unlock: Callable[[str], None] | None = None,
+    ) -> None:
         self._database = database
+        self._on_unlock = on_unlock
 
     def has_admin(self) -> bool:
         """判断管理员账户是否已经初始化。"""
@@ -53,6 +59,8 @@ class AuthService:
                 )
             )
             session.commit()
+            if self._on_unlock:
+                self._on_unlock(password)
             return session_id
 
     def is_valid(self, session_id: str | None) -> bool:

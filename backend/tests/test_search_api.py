@@ -68,3 +68,27 @@ def test_search_rejects_unknown_category(client) -> None:
     )
 
     assert response.status_code == 422
+
+
+def test_saved_mteam_settings_power_search(client, httpx_mock) -> None:
+    _login(client)
+    client.put(
+        "/api/settings/mteam",
+        json={
+            "base_url": "https://m-team.test",
+            "headers": {"x-api-key": "stored-secret"},
+            "cookie": "tp=stored-cookie",
+        },
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://api.m-team.test/api/torrent/search",
+        json={"data": {"data": []}},
+    )
+
+    response = client.get("/api/search", params={"q": "Movie"})
+
+    assert response.status_code == 200
+    request = httpx_mock.get_request()
+    assert request.headers["x-api-key"] == "stored-secret"
+    assert request.headers["Cookie"] == "tp=stored-cookie"

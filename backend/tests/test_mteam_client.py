@@ -80,3 +80,19 @@ def test_non_success_response_raises_integration_error(
 
     with pytest.raises(IntegrationError, match="M-Team 搜索失败"):
         mteam_client.search("Movie", "all", 1)
+
+
+def test_get_download_url_posts_id_and_returns_response_data(
+    mteam_client: MTeamClient,
+    httpx_mock,
+) -> None:
+    httpx_mock.add_response(
+        method="POST",
+        url="https://api.m-team.test/api/torrent/genDlToken?id=7",
+        json={"data": "https://download.m-team.test/credential"},
+    )
+
+    url = mteam_client.get_download_url("7")
+
+    assert url == "https://download.m-team.test/credential"
+    assert httpx_mock.get_request().headers["x-api-key"] == "secret"
