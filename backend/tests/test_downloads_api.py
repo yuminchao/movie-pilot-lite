@@ -96,4 +96,8 @@ def test_download_api_does_not_expose_delete(client) -> None:
 
     response = client.delete("/api/downloads/1")
 
-    assert response.status_code == 405
+    assert response.status_code in {404, 405}
+    assert not any(
+        route.path.startswith("/api/downloads") and "DELETE" in route.methods
+        for route in client.app.routes
+    )
