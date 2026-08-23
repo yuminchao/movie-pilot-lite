@@ -67,3 +67,33 @@ def test_qbittorrent_settings_require_credentials(client) -> None:
     )
 
     assert response.status_code == 422
+
+
+def test_connection_test_requires_saved_configuration(client) -> None:
+    _login(client)
+
+    response = client.post("/api/settings/mteam/test")
+
+    assert response.status_code == 422
+    assert response.json() == {"detail": "连接尚未配置"}
+
+
+def test_download_defaults_can_be_configured(client) -> None:
+    _login(client)
+
+    saved = client.put(
+        "/api/settings/downloads",
+        json={
+            "category": "media",
+            "save_path": "/downloads/media",
+            "start": False,
+        },
+    )
+    loaded = client.get("/api/settings/downloads")
+
+    assert saved.status_code == 200
+    assert loaded.json() == {
+        "category": "media",
+        "save_path": "/downloads/media",
+        "start": False,
+    }

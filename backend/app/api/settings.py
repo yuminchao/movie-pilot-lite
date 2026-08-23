@@ -1,3 +1,4 @@
+from pathlib import PurePosixPath, PureWindowsPath
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -33,6 +34,23 @@ class QbittorrentSettingsRequest(BaseModel):
         if self.api_key or (self.username and self.password):
             return self
         raise ValueError("请提供 qBittorrent API Key 或用户名和密码")
+
+
+class DownloadDefaultsRequest(BaseModel):
+    """qBittorrent 任务默认参数。"""
+
+    category: str = Field(min_length=1, max_length=100)
+    save_path: str = Field(min_length=1, max_length=1000)
+    start: bool = True
+
+    @model_validator(mode="after")
+    def validate_save_path(self) -> "DownloadDefaultsRequest":
+        """要求保存路径适用于 Unix 或 Windows qBittorrent。"""
+        if PurePosixPath(self.save_path).is_absolute() or PureWindowsPath(
+            self.save_path
+        ).is_absolute():
+            return self
+        raise ValueError("保存路径必须是绝对路径")
 
 
 def get_settings_service(request: Request) -> SettingsService:
@@ -76,7 +94,13 @@ def test_mteam(
     service: SettingsService = Depends(get_settings_service),
 ) -> dict[str, Any]:
     """验证已保存的 M-Team 连接。"""
-    return service.test_mteam()
+    try:
+        return service.test_mteam()
+    except ValueError as error:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=str(error),
+        ) from error
 
 
 @router.get("/qbittorrent")
@@ -109,5 +133,29 @@ def test_qbittorrent(
     service: SettingsService = Depends(get_settings_service),
 ) -> dict[str, Any]:
     """验证已保存的 qBittorrent 连接。"""
-    return service.test_qbittorrent()
+    try:
+        return service.test_qbittorrent()
+    except ValueError as error:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=str(error),
+        ) from error
 
+
+@router.get("/downloads")
+def get_download_defaults(
+    _: str = Depends(require_session),
+    service: SettingsService = Depends(get_settings_service),
+) -> dict[str, Any]:
+    """返回搜索结果使用的 qBittorrent 默认参数。"""
+    return service.get_download_defaults()
+
+
+@router.put("/downloads")
+def save_download_defaults(
+    payload: DownloadDefaultsRequest,
+    _: str = Depends(require_session),
+    service: SettingsService = Depends(get_settings_service),
+) -> dict[str, Any]:
+    """保存搜索结果使用的 qBittorrent 默认参数。"""
+    return service.save_download_defaults(payload.model_dump())

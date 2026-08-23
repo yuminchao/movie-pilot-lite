@@ -140,9 +140,13 @@ class MTeamClient:
     @staticmethod
     def _build_api_url(site_url: str) -> str:
         parsed = urlsplit(site_url)
-        if not parsed.scheme or not parsed.netloc:
+        if not parsed.scheme or not parsed.hostname:
             raise ValueError("M-Team 站点地址必须包含 scheme 和 host")
-        host = parsed.netloc
+        host = parsed.hostname.lower()
+        for official_domain in ("m-team.cc", "m-team.io"):
+            if host == official_domain or host.endswith(f".{official_domain}"):
+                host = official_domain
+                break
         if not host.startswith("api."):
             host = f"api.{host}"
         return urlunsplit((parsed.scheme, host, "", "", ""))

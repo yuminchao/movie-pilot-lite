@@ -12,9 +12,13 @@ class SecretVault:
         self._cipher = SecretCipher.from_password(password)
 
     @property
+    def is_unlocked(self) -> bool:
+        """判断当前进程是否已经通过管理员登录解锁。"""
+        return self._cipher is not None
+
+    @property
     def cipher(self) -> SecretCipher:
         """返回当前加密器；未登录时拒绝访问。"""
         if self._cipher is None:
             raise RuntimeError("敏感配置尚未解锁")
         return self._cipher
-

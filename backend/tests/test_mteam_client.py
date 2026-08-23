@@ -96,3 +96,17 @@ def test_get_download_url_posts_id_and_returns_response_data(
 
     assert url == "https://download.m-team.test/credential"
     assert httpx_mock.get_request().headers["x-api-key"] == "secret"
+
+
+def test_mteam_site_subdomain_is_normalized_to_api_host(httpx_mock) -> None:
+    client = MTeamClient(
+        base_url="https://kp.m-team.cc",
+        headers={"x-api-key": "secret"},
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://api.m-team.cc/api/torrent/search",
+        json={"data": {"data": []}},
+    )
+
+    assert client.search("Movie", "all", 1) == []

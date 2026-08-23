@@ -46,6 +46,19 @@ class SettingsService:
         QbittorrentClient(QbittorrentConfig(**value)).test_connection()
         return {"success": True, "message": "qBittorrent 连接成功"}
 
+    def save_download_defaults(self, value: dict[str, Any]) -> dict[str, Any]:
+        """保存搜索结果展开表单使用的 qBittorrent 默认值。"""
+        self._repository().set_secret(ConfigKey.DOWNLOAD_DEFAULTS, value)
+        return value
+
+    def get_download_defaults(self) -> dict[str, Any]:
+        """返回下载默认值或安全的首次使用值。"""
+        return self._repository().get_secret(ConfigKey.DOWNLOAD_DEFAULTS) or {
+            "category": "downloads",
+            "save_path": "/downloads",
+            "start": True,
+        }
+
     def _required(self, key: ConfigKey) -> dict[str, Any]:
         value = self._repository().get_secret(key)
         if value is None:
@@ -54,4 +67,3 @@ class SettingsService:
 
     def _repository(self) -> ConfigRepository:
         return ConfigRepository(self._database.session_factory, self._vault.cipher)
-

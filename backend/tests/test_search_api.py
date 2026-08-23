@@ -1,5 +1,5 @@
 from app.api.search import get_search_service
-from app.integrations.mteam import SearchResult
+from app.integrations.mteam import IntegrationError, SearchResult
 from app.services.search import SearchPage
 
 
@@ -92,3 +92,17 @@ def test_saved_mteam_settings_power_search(client, httpx_mock) -> None:
     request = httpx_mock.get_request()
     assert request.headers["x-api-key"] == "stored-secret"
     assert request.headers["Cookie"] == "tp=stored-cookie"
+
+
+def test_integration_failure_returns_sanitized_bad_gateway(client) -> None:
+    class FailingService:
+        def search(self, keyword: str, category: str, page: int, sort: str):
+            raise IntegrationError("M-Team 搜索失败")
+
+    _login(client)
+    client.app.dependency_overrides[get_search_service] = lambda: FailingService()
+
+    response = client.get("/api/search", params={"q": "Movie"})
+
+    assert response.status_code == 502
+    assert response.json() == {"detail": "M-Team 搜索失败"}

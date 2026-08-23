@@ -1,9 +1,9 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel, Field
 
-from app.auth.session import SESSION_COOKIE, AuthService
+from app.auth.session import SESSION_COOKIE, AuthService, RateLimitExceeded
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -30,9 +30,15 @@ def require_session(
 
 
 @router.get("/status")
-def auth_status(service: AuthService = Depends(get_auth_service)) -> dict[str, bool]:
+def auth_status(
+    session_id: Annotated[str | None, Cookie(alias=SESSION_COOKIE)] = None,
+    service: AuthService = Depends(get_auth_service),
+) -> dict[str, bool]:
     """返回是否需要首次初始化。"""
-    return {"setup_required": not service.has_admin()}
+    return {
+        "setup_required": not service.has_admin(),
+        "authenticated": service.is_valid(session_id),
+    }
 
 
 @router.post("/setup", status_code=status.HTTP_201_CREATED)
@@ -45,9 +51,24 @@ def setup(request: PasswordRequest, service: AuthService = Depends(get_auth_serv
 
 
 @router.post("/login", status_code=status.HTTP_204_NO_CONTENT)
-def login(request: PasswordRequest, response: Response, service: AuthService = Depends(get_auth_service)) -> None:
+def login(
+    payload: PasswordRequest,
+    request: Request,
+    response: Response,
+    service: AuthService = Depends(get_auth_service),
+) -> None:
     """验证密码并设置 HttpOnly 会话 Cookie。"""
-    session_id = service.login(request.password)
+    try:
+        session_id = service.login(
+            payload.password,
+            source=request.client.host if request.client else "unknown",
+        )
+    except RateLimitExceeded as error:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=str(error),
+            headers={"Retry-After": "60"},
+        ) from error
     if session_id is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="认证失败")
     response.set_cookie(
@@ -69,4 +90,3 @@ def logout(
     """使当前会话失效并清理 Cookie。"""
     service.logout(session_id)
     response.delete_cookie(SESSION_COOKIE)
-

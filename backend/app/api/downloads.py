@@ -41,7 +41,7 @@ def add_download(
             request.start,
         )
     except (ValueError, InvalidSourceToken) as error:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)) from error
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error)) from error
     response.status_code = status.HTTP_201_CREATED if created else status.HTTP_200_OK
     return record
 
@@ -53,4 +53,3 @@ def list_downloads(
 ) -> dict:
     """返回 qBittorrent 任务的只读状态。"""
     return service.list()
-
