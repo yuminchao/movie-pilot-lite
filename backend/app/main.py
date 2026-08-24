@@ -1,6 +1,8 @@
-import secrets
 import os
+import secrets
 from pathlib import Path
+from threading import RLock
+from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.exceptions import RequestValidationError
@@ -18,6 +20,7 @@ from app.integrations.qbittorrent import (
     QbittorrentConfig,
     QbittorrentError,
 )
+from app.services.checkin import CheckinService
 from app.services.downloads import DownloadService
 from app.services.search import SearchService
 from app.services.tokens import SourceTokenCodec
@@ -53,6 +56,31 @@ def create_app(
         """使用当前登录解锁的密钥构造配置仓库。"""
         return ConfigRepository(database.session_factory, vault.cipher)
 
+    checkin_instance: CheckinService | None = None
+    checkin_init_lock = RLock()
+
+    def checkin_service() -> CheckinService:
+        """返回应用级共享签到模块，并在首次使用时完成初始化。
+
+        Returns:
+            当前应用唯一的签到模块实例。
+
+        Raises:
+            RuntimeError: 敏感配置密钥库尚未解锁。
+            zoneinfo.ZoneInfoNotFoundError: 应用时区配置无效。
+        """
+        nonlocal checkin_instance
+        with checkin_init_lock:
+            if checkin_instance is None:
+                checkin_instance = CheckinService(
+                    repository(),
+                    lambda value: MTeamClient(**value),
+                    ZoneInfo(os.getenv("TZ", "Asia/Shanghai")),
+                )
+            return checkin_instance
+
+    application.state.get_checkin_service = checkin_service
+
     def mteam_client() -> MTeamClient:
         """从加密配置构造 M-Team 客户端。"""
         value = repository().get_secret(ConfigKey.MTEAM_CONNECTION)
@@ -83,6 +111,7 @@ def create_app(
 
     application.dependency_overrides[search.get_search_service] = search_service
     application.dependency_overrides[downloads.get_download_service] = download_service
+    application.dependency_overrides[settings.get_checkin_service] = checkin_service
 
     async def integration_error_handler(
         _: Request,

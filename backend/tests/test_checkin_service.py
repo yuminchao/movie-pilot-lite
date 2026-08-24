@@ -1,5 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, time, timedelta
+from datetime import UTC, datetime, time, timedelta
 from pathlib import Path
 from threading import Event, Lock
 from zoneinfo import ZoneInfo
@@ -25,6 +25,22 @@ class FakeMTeamClient:
         self.calls += 1
         if self.error is not None:
             raise self.error
+
+
+class FaultInjectingRepository:
+    def __init__(self, repository: ConfigRepository, fail_on_set: int) -> None:
+        self.repository = repository
+        self.fail_on_set = fail_on_set
+        self.set_calls = 0
+
+    def get_secret(self, key: ConfigKey):
+        return self.repository.get_secret(key)
+
+    def set_secret(self, key: ConfigKey, value: dict) -> None:
+        self.set_calls += 1
+        if self.set_calls == self.fail_on_set:
+            raise RuntimeError("repository write failed")
+        self.repository.set_secret(key, value)
 
 
 @pytest.fixture
@@ -205,6 +221,7 @@ def test_client_factory_failure_is_sanitized(repository: ConfigRepository) -> No
 def test_unexpected_third_party_exception_is_sanitized_and_retried(
     repository: ConfigRepository,
     failure_source: str,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     repository.set_secret(
         ConfigKey.MTEAM_CONNECTION,
@@ -233,6 +250,8 @@ def test_unexpected_third_party_exception_is_sanitized_and_retried(
     assert persisted["attempts_on_date"] == 2
     assert "secret-runtime-detail" not in str(status)
     assert "secret-runtime-detail" not in str(persisted)
+    assert "RuntimeError" in caplog.text
+    assert "secret-runtime-detail" not in caplog.text
 
 
 def test_seconds_until_next_covers_execution_retry_and_next_day(
@@ -312,6 +331,136 @@ def test_concurrent_runs_consume_only_one_attempt(repository: ConfigRepository) 
     assert client.calls == 1
 
 
+def test_reservation_failure_prevents_remote_call(
+    repository: ConfigRepository,
+) -> None:
+    repository.set_secret(
+        ConfigKey.MTEAM_CONNECTION,
+        {"base_url": "https://m-team.test", "headers": {"x-api-key": "secret"}},
+    )
+    repository.set_secret(
+        ConfigKey.MTEAM_CHECKIN,
+        {"enabled": True, "execution_time": "09:00"},
+    )
+    client = FakeMTeamClient()
+    failing_repository = FaultInjectingRepository(repository, fail_on_set=1)
+    service = CheckinService(failing_repository, lambda _: client, TZ)
+
+    with pytest.raises(RuntimeError, match="repository write failed"):
+        service.run_due(datetime(2026, 8, 24, 9, 0, tzinfo=TZ))
+
+    assert client.calls == 0
+
+
+def test_final_state_failure_keeps_conservative_reservation(
+    repository: ConfigRepository,
+) -> None:
+    repository.set_secret(
+        ConfigKey.MTEAM_CONNECTION,
+        {"base_url": "https://m-team.test", "headers": {"x-api-key": "secret"}},
+    )
+    repository.set_secret(
+        ConfigKey.MTEAM_CHECKIN,
+        {"enabled": True, "execution_time": "09:00"},
+    )
+    client = FakeMTeamClient()
+    failing_repository = FaultInjectingRepository(repository, fail_on_set=2)
+    service = CheckinService(failing_repository, lambda _: client, TZ)
+    first = datetime(2026, 8, 24, 9, 0, tzinfo=TZ)
+
+    with pytest.raises(RuntimeError, match="repository write failed"):
+        service.run_due(first)
+
+    assert service.run_due(first + timedelta(minutes=30)) is False
+    assert client.calls == 1
+    persisted = repository.get_secret(ConfigKey.MTEAM_CHECKIN)
+    assert persisted is not None
+    assert persisted["attempts_on_date"] == 2
+    assert persisted["success"] is None
+    assert persisted["message"] == "签到状态未知"
+
+
+def test_slow_remote_call_does_not_block_settings_update(
+    repository: ConfigRepository,
+) -> None:
+    class BlockingClient(FakeMTeamClient):
+        def __init__(self) -> None:
+            super().__init__()
+            self.started = Event()
+            self.release = Event()
+
+        def check_in(self) -> None:
+            self.started.set()
+            assert self.release.wait(timeout=2)
+            super().check_in()
+
+    client = BlockingClient()
+    service = _configured_service(repository, client)
+    now = datetime(2026, 8, 24, 9, 0, tzinfo=TZ)
+    settings_started = Event()
+    settings_saved = Event()
+
+    def save_settings() -> dict:
+        settings_started.set()
+        result = service.save_settings(False, time(10, 30))
+        settings_saved.set()
+        return result
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        run = executor.submit(service.run_due, now)
+        assert client.started.wait(timeout=2)
+        saved = executor.submit(save_settings)
+        try:
+            assert settings_started.wait(timeout=2)
+            assert settings_saved.wait(timeout=0.2)
+        finally:
+            client.release.set()
+
+        assert run.result(timeout=2) is True
+        assert saved.result(timeout=2)["enabled"] is False
+
+    status = service.read_settings()
+    assert status["enabled"] is False
+    assert status["execution_time"] == "10:30"
+    assert status["success"] is True
+
+
+def test_stale_final_does_not_overwrite_new_date_state(
+    repository: ConfigRepository,
+) -> None:
+    class CrossDateClient(FakeMTeamClient):
+        def __init__(self) -> None:
+            super().__init__()
+            self.first_started = Event()
+            self.release_first = Event()
+            self.lock = Lock()
+
+        def check_in(self) -> None:
+            with self.lock:
+                self.calls += 1
+                call_number = self.calls
+            if call_number == 1:
+                self.first_started.set()
+                assert self.release_first.wait(timeout=2)
+
+    client = CrossDateClient()
+    service = _configured_service(repository, client, time(0, 0))
+    old_date = datetime(2026, 8, 24, 23, 59, tzinfo=TZ)
+    new_date = datetime(2026, 8, 25, 0, 0, tzinfo=TZ)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        stale = executor.submit(service.run_due, old_date)
+        assert client.first_started.wait(timeout=2)
+        assert service.run_due(new_date) is True
+        client.release_first.set()
+        assert stale.result(timeout=2) is True
+
+    assert service.run_due(new_date + timedelta(minutes=1)) is False
+    assert client.calls == 2
+    status = service.read_settings()
+    assert status["last_success_date"] == "2026-08-25"
+
+
 def test_seconds_until_next_uses_elapsed_time_across_dst(
     repository: ConfigRepository,
 ) -> None:
@@ -360,3 +509,61 @@ def test_retry_delay_uses_real_elapsed_time_across_dst_fallback(
     assert service.seconds_until_next(before_retry) == 60
     assert service.run_due(retry_at) is True
     assert client.calls == 2
+
+
+def test_nonexistent_execution_time_moves_forward_by_dst_gap(
+    repository: ConfigRepository,
+) -> None:
+    timezone = ZoneInfo("America/New_York")
+    client = FakeMTeamClient()
+    repository.set_secret(
+        ConfigKey.MTEAM_CONNECTION,
+        {"base_url": "https://m-team.test", "headers": {"x-api-key": "secret"}},
+    )
+    service = CheckinService(repository, lambda _: client, timezone)
+    service.save_settings(True, time(2, 30))
+    before_shifted_time = datetime(2026, 3, 8, 3, 29, tzinfo=timezone)
+    shifted_time = datetime(2026, 3, 8, 3, 30, tzinfo=timezone)
+
+    assert service.seconds_until_next(before_shifted_time) == 60
+    assert service.run_due(before_shifted_time) is False
+    assert service.run_due(shifted_time) is True
+    assert client.calls == 1
+
+
+def test_seconds_until_next_saturates_at_datetime_max(
+    repository: ConfigRepository,
+) -> None:
+    service = CheckinService(repository, lambda _: FakeMTeamClient(), UTC)
+    repository.set_secret(
+        ConfigKey.MTEAM_CHECKIN,
+        {
+            "enabled": True,
+            "execution_time": "09:00",
+            "last_success_date": "9999-12-31",
+        },
+    )
+    maximum = datetime.max.replace(tzinfo=UTC)
+
+    assert service.seconds_until_next(maximum) == 86_400
+
+
+def test_retry_wait_saturates_at_datetime_max(
+    repository: ConfigRepository,
+) -> None:
+    service = CheckinService(repository, lambda _: FakeMTeamClient(), UTC)
+    repository.set_secret(
+        ConfigKey.MTEAM_CHECKIN,
+        {
+            "enabled": True,
+            "execution_time": "09:00",
+            "last_attempt_at": "9999-12-31T23:59:59.999999+00:00",
+            "attempt_date": "9999-12-31",
+            "attempts_on_date": 1,
+            "success": False,
+            "message": "签到失败",
+        },
+    )
+    maximum = datetime.max.replace(tzinfo=UTC)
+
+    assert service.seconds_until_next(maximum) == 86_400

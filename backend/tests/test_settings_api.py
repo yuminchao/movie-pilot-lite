@@ -3,6 +3,7 @@ from unittest.mock import Mock
 import pytest
 
 import app.services.settings as settings_module
+from app.api import settings as settings_api
 from app.config.repository import ConfigKey, ConfigRepository
 
 
@@ -357,6 +358,13 @@ def test_checkin_settings_require_session(client) -> None:
     response = client.get("/api/settings/mteam/checkin")
 
     assert response.status_code == 401
+
+
+def test_checkin_dependency_returns_application_singleton(client) -> None:
+    _login(client)
+    provider = client.app.dependency_overrides[settings_api.get_checkin_service]
+
+    assert provider() is provider()
 
 
 def test_unconfigured_checkin_settings_return_defaults(client) -> None:

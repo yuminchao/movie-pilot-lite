@@ -1,16 +1,42 @@
+import logging
 import math
 from collections.abc import Callable
+from contextlib import AbstractContextManager
 from datetime import UTC, date, datetime, time, timedelta, tzinfo
 from threading import RLock
 from typing import Any, Protocol
+from uuid import uuid4
 
-from app.config.repository import ConfigKey, ConfigRepository
+from app.config.repository import ConfigKey
 
 
 _DEFAULT_EXECUTION_TIME = "09:00"
 _RETRY_DELAY = timedelta(minutes=30)
 _DISABLED_WAIT_SECONDS = 24 * 60 * 60
-_state_lock = RLock()
+_MAX_ATTEMPTS = 2
+logger = logging.getLogger(__name__)
+
+
+class _CheckinRepository(Protocol):
+    def get_secret(self, key: ConfigKey) -> dict[str, Any] | None:
+        """读取加密配置。
+
+        Args:
+            key: 固定配置键。
+
+        Returns:
+            解密后的配置；尚未配置时返回 None。
+        """
+        ...
+
+    def set_secret(self, key: ConfigKey, value: dict[str, Any]) -> None:
+        """持久化加密配置。
+
+        Args:
+            key: 固定配置键。
+            value: 待加密的结构化配置。
+        """
+        ...
 
 
 class _CheckinClient(Protocol):
@@ -28,13 +54,23 @@ class CheckinService:
 
     def __init__(
         self,
-        repository: ConfigRepository,
+        repository: _CheckinRepository,
         client_factory: Callable[[dict[str, Any]], _CheckinClient],
         timezone: tzinfo,
+        lock: AbstractContextManager[Any] | None = None,
     ) -> None:
+        """初始化签到模块及其内部 seam。
+
+        Args:
+            repository: 签到与站点配置仓库。
+            client_factory: 根据站点配置创建第三方签到 adapter 的工厂。
+            timezone: 应用本地时区。
+            lock: 保护实例状态读改写的可重入上下文锁。
+        """
         self._repository = repository
         self._client_factory = client_factory
         self._timezone = timezone
+        self._lock = RLock() if lock is None else lock
 
     def read_settings(self) -> dict[str, Any]:
         """返回归一化后的公开签到设置与运行状态。
@@ -62,7 +98,7 @@ class CheckinService:
             ValueError: 已有加密配置无效。
             sqlalchemy.exc.SQLAlchemyError: 配置仓库读写失败。
         """
-        with _state_lock:
+        with self._lock:
             value = self._load()
             value["enabled"] = enabled
             value["execution_time"] = execution_time.strftime("%H:%M")
@@ -71,6 +107,8 @@ class CheckinService:
 
     def run_due(self, now: datetime) -> bool:
         """在满足每日执行和重试约束时尝试一次签到。
+
+        第三方调用前持久化保守预约；最终状态无法提交时，当天不再自动调用。
 
         Args:
             now: 带时区的当前时间。
@@ -82,37 +120,59 @@ class CheckinService:
             ValueError: 当前时间不带时区或已有加密配置无效。
             sqlalchemy.exc.SQLAlchemyError: 配置仓库读写失败。
         """
-        with _state_lock:
+        with self._lock:
             local_now = self._local_time(now)
             value = self._load()
             local_date = local_now.date().isoformat()
             if not self._is_due(value, local_now, local_date):
                 return False
 
-            attempts = self._attempts_for(value, local_date) + 1
-            value.update(
+            attempt_number = self._attempts_for(value, local_date) + 1
+            attempted_at = local_now.isoformat(timespec="seconds")
+            reservation_id = uuid4().hex
+            connection = self._repository.get_secret(ConfigKey.MTEAM_CONNECTION)
+            reservation = dict(value)
+            reservation.update(
                 {
-                    "last_attempt_at": local_now.isoformat(timespec="seconds"),
+                    "last_attempt_at": attempted_at,
                     "attempt_date": local_date,
-                    "attempts_on_date": attempts,
+                    "attempts_on_date": _MAX_ATTEMPTS,
+                    "reservation_id": reservation_id,
+                    "success": None,
+                    "message": "签到状态未知",
                 }
             )
-            connection = self._repository.get_secret(ConfigKey.MTEAM_CONNECTION)
-            if connection is None:
-                value.update(success=False, message="站点尚未配置")
+            self._repository.set_secret(ConfigKey.MTEAM_CHECKIN, reservation)
+
+        success = False
+        if connection is None:
+            message = "站点尚未配置"
+        else:
+            try:
+                self._client_factory(connection).check_in()
+            except Exception as error:
+                logger.warning("M-Team 签到异常类型: %s", type(error).__name__)
+                message = "签到失败"
             else:
-                try:
-                    self._client_factory(connection).check_in()
-                except Exception:
-                    value.update(success=False, message="签到失败")
-                else:
-                    value.update(
-                        last_success_date=local_date,
-                        success=True,
-                        message="签到成功",
-                    )
-            self._repository.set_secret(ConfigKey.MTEAM_CHECKIN, value)
-            return True
+                success = True
+                message = "签到成功"
+
+        with self._lock:
+            latest = self._load()
+            if latest.get("reservation_id") != reservation_id:
+                return True
+            latest.update(
+                last_attempt_at=attempted_at,
+                attempt_date=local_date,
+                attempts_on_date=attempt_number,
+                success=success,
+                message=message,
+            )
+            latest.pop("reservation_id", None)
+            if success:
+                latest["last_success_date"] = local_date
+            self._repository.set_secret(ConfigKey.MTEAM_CHECKIN, latest)
+        return True
 
     def seconds_until_next(self, now: datetime) -> int:
         """计算到下一次可能执行签到的有限等待秒数。
@@ -134,14 +194,10 @@ class CheckinService:
 
         local_date = local_now.date().isoformat()
         scheduled = self._scheduled_at(local_now.date(), value["execution_time"])
-        next_scheduled = self._scheduled_at(
-            local_now.date() + timedelta(days=1),
-            value["execution_time"],
-        )
         if self._instant(local_now) < self._instant(scheduled):
             return self._seconds_between(local_now, scheduled)
         if value["last_success_date"] == local_date:
-            return self._seconds_between(local_now, next_scheduled)
+            return self._seconds_until_next_day(local_now, value["execution_time"])
 
         attempts = self._attempts_for(value, local_date)
         if attempts == 0:
@@ -150,12 +206,18 @@ class CheckinService:
             last_attempt = self._parse_attempt(value["last_attempt_at"])
             if last_attempt is None:
                 return 1
-            retry_at = self._instant(last_attempt) + _RETRY_DELAY
+            try:
+                retry_at = self._instant(last_attempt) + _RETRY_DELAY
+            except OverflowError:
+                return _DISABLED_WAIT_SECONDS
             retry_local_date = retry_at.astimezone(self._timezone).date()
             if retry_local_date != local_now.date():
-                return self._seconds_between(local_now, next_scheduled)
+                return self._seconds_until_next_day(
+                    local_now,
+                    value["execution_time"],
+                )
             return self._seconds_between(local_now, retry_at)
-        return self._seconds_between(local_now, next_scheduled)
+        return self._seconds_until_next_day(local_now, value["execution_time"])
 
     def _is_due(
         self,
@@ -182,7 +244,7 @@ class CheckinService:
         ):
             return False
         attempts = self._attempts_for(value, local_date)
-        if attempts >= 2:
+        if attempts >= _MAX_ATTEMPTS:
             return False
         if attempts == 0:
             return True
@@ -259,21 +321,48 @@ class CheckinService:
         return parsed
 
     def _scheduled_at(self, local_date: date, execution_time: str) -> datetime:
-        """构造每日执行时刻，歧义或不存在的本地时间固定选择 fold=0。
+        """构造每日执行时刻并稳定处理 DST 歧义或空洞。
 
         Args:
             local_date: 应用时区内的执行日期。
             execution_time: 已归一化为 HH:MM 的执行时间。
 
         Returns:
-            带应用时区且 fold 固定为 0 的执行时刻。
+            带应用时区的有效执行时刻。歧义时间使用 fold=0；不存在时间
+            通过 UTC 往返按 DST 缺口向前平移。
         """
         scheduled = datetime.combine(
             local_date,
             time.fromisoformat(execution_time),
             self._timezone,
+        ).replace(fold=0)
+        round_tripped = scheduled.astimezone(UTC).astimezone(self._timezone)
+        if round_tripped.replace(tzinfo=None) != scheduled.replace(tzinfo=None):
+            return round_tripped
+        return scheduled
+
+    def _seconds_until_next_day(
+        self,
+        local_now: datetime,
+        execution_time: str,
+    ) -> int:
+        """计算到次日本地执行时间的秒数，并在日期上界饱和。
+
+        Args:
+            local_now: 应用时区内的当前时间。
+            execution_time: 已归一化为 HH:MM 的执行时间。
+
+        Returns:
+            不小于一秒的有限等待秒数；日期无法递增时返回二十四小时。
+        """
+        try:
+            next_date = local_now.date() + timedelta(days=1)
+        except OverflowError:
+            return _DISABLED_WAIT_SECONDS
+        return self._seconds_between(
+            local_now,
+            self._scheduled_at(next_date, execution_time),
         )
-        return scheduled.replace(fold=0)
 
     @staticmethod
     def _instant(value: datetime) -> datetime:
