@@ -126,10 +126,16 @@ describe('App', () => {
     expect(thumbnail).toHaveAttribute('loading', 'lazy')
     expect(thumbnail).toHaveAttribute('decoding', 'async')
     expect(thumbnail).toHaveAttribute('referrerpolicy', 'no-referrer')
+    expect(thumbnail).toHaveAttribute('aria-hidden', 'true')
+    const titleButton = screen.getByRole('button', { name: '海报电影电影 · 2160p' })
+    expect(titleButton).not.toHaveAccessibleName(/海报电影 海报/)
 
     await user.click(screen.getByText('海报电影'))
 
-    expect(screen.getAllByAltText('海报电影 海报')).toHaveLength(2)
+    const posters = screen.getAllByAltText('海报电影 海报')
+    expect(posters).toHaveLength(2)
+    expect(screen.getByRole('img', { name: '海报电影 海报' })).toBe(posters[1])
+    expect(posters[1]).not.toHaveAttribute('aria-hidden')
   })
 
   it('uses a fixed fallback for missing and failed posters', async () => {

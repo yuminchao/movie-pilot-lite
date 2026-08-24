@@ -16,7 +16,11 @@ function PosterImage({ src, title, size }: PosterProps) {
 
   if (!src || failed) {
     return (
-      <div className={`poster poster-${size} poster-fallback`} data-testid="poster-fallback">
+      <div
+        className={`poster poster-${size} poster-fallback`}
+        data-testid="poster-fallback"
+        aria-hidden={size === 'thumb' ? true : undefined}
+      >
         <ImageOff aria-hidden="true" size={size === 'thumb' ? 18 : 30} />
       </div>
     )
@@ -27,6 +31,7 @@ function PosterImage({ src, title, size }: PosterProps) {
       className={`poster poster-${size}`}
       src={src}
       alt={`${title} 海报`}
+      aria-hidden={size === 'thumb' ? true : undefined}
       loading="lazy"
       decoding="async"
       referrerPolicy="no-referrer"
