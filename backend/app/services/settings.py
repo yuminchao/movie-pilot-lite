@@ -6,6 +6,15 @@ from app.db.session import Database
 from app.integrations.mteam import MTeamClient
 from app.integrations.qbittorrent import QbittorrentClient, QbittorrentConfig
 
+MTEAM_SECRET_MASK = "••••••••"
+MTEAM_DEFAULTS: dict[str, Any] = {
+    "base_url": "https://kp.m-team.cc",
+    "headers": {},
+    "cookie": None,
+    "user_agent": "movie-pilot-lite/0.1",
+    "timeout": 15,
+}
+
 
 class SettingsService:
     """加密保存第三方配置并执行连接测试。"""
@@ -17,12 +26,34 @@ class SettingsService:
     def save_mteam(self, value: dict[str, Any]) -> dict[str, Any]:
         """加密保存 M-Team 连接配置。"""
         repository = self._repository()
-        repository.set_secret(ConfigKey.MTEAM_CONNECTION, value)
-        return repository.get_masked_status(ConfigKey.MTEAM_CONNECTION)
+        previous = repository.get_secret(ConfigKey.MTEAM_CONNECTION)
+        previous_headers = previous["headers"] if previous is not None else {}
+        headers: dict[str, str] = {}
+        for key, header_value in value["headers"].items():
+            if header_value == MTEAM_SECRET_MASK:
+                if key not in previous_headers:
+                    raise ValueError(f"Header {key} 没有可保留的旧值")
+                headers[key] = previous_headers[key]
+            else:
+                headers[key] = header_value
+
+        cookie = value["cookie"]
+        if cookie == MTEAM_SECRET_MASK:
+            if previous is None or not previous.get("cookie"):
+                raise ValueError("Cookie 没有可保留的旧值")
+            cookie = previous["cookie"]
+
+        saved_value = {**value, "headers": headers, "cookie": cookie}
+        repository.set_secret(ConfigKey.MTEAM_CONNECTION, saved_value)
+        return self._mteam_view(repository, saved_value)
 
     def get_mteam(self) -> dict[str, Any]:
         """返回 M-Team 配置的掩码状态。"""
-        return self._repository().get_masked_status(ConfigKey.MTEAM_CONNECTION)
+        repository = self._repository()
+        return self._mteam_view(
+            repository,
+            repository.get_secret(ConfigKey.MTEAM_CONNECTION),
+        )
 
     def save_qbittorrent(self, value: dict[str, Any]) -> dict[str, Any]:
         """加密保存 qBittorrent 连接配置。"""
@@ -67,3 +98,27 @@ class SettingsService:
 
     def _repository(self) -> ConfigRepository:
         return ConfigRepository(self._database.session_factory, self._vault.cipher)
+
+    @staticmethod
+    def _mteam_view(
+        repository: ConfigRepository,
+        value: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        """组装仅暴露公开字段和统一掩码的 M-Team 配置视图。"""
+        status = repository.get_masked_status(ConfigKey.MTEAM_CONNECTION)
+        if value is None:
+            return {**status, **MTEAM_DEFAULTS}
+
+        normalized = {**MTEAM_DEFAULTS, **value}
+        return {
+            "configured": True,
+            "masked": MTEAM_SECRET_MASK,
+            "updated_at": status["updated_at"],
+            "base_url": normalized["base_url"],
+            "headers": {
+                key: MTEAM_SECRET_MASK for key in normalized["headers"]
+            },
+            "cookie": MTEAM_SECRET_MASK if normalized["cookie"] else None,
+            "user_agent": normalized["user_agent"],
+            "timeout": normalized["timeout"],
+        }

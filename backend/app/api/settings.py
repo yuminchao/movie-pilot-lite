@@ -80,12 +80,18 @@ def save_mteam(
     service: SettingsService = Depends(get_settings_service),
 ) -> dict[str, Any]:
     """加密保存 M-Team 连接配置。"""
-    return service.save_mteam(
-        {
-            **payload.model_dump(exclude_none=True),
-            "base_url": str(payload.base_url).rstrip("/"),
-        }
-    )
+    try:
+        return service.save_mteam(
+            {
+                **payload.model_dump(),
+                "base_url": str(payload.base_url).rstrip("/"),
+            }
+        )
+    except ValueError as error:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=str(error),
+        ) from error
 
 
 @router.post("/mteam/test")

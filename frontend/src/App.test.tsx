@@ -94,4 +94,48 @@ describe('App', () => {
       start: false,
     })
   })
+
+  it('echoes masked M-Team settings and preserves them when saving', async () => {
+    const mteamSettings = {
+      configured: true,
+      masked: '••••••••',
+      updated_at: '2026-08-24T12:00:00Z',
+      base_url: 'https://m-team.example',
+      headers: {
+        'x-api-key': '••••••••',
+        authorization: '••••••••',
+      },
+      cookie: '••••••••',
+      user_agent: 'custom-agent/2.0',
+      timeout: 37,
+    }
+    vi.spyOn(api, 'get').mockImplementation((path) => {
+      if (path === '/api/settings/mteam') return Promise.resolve(mteamSettings)
+      if (path === '/api/settings/downloads') {
+        return Promise.resolve({ category: 'downloads', save_path: '/downloads', start: true })
+      }
+      return Promise.resolve({ configured: false, masked: null, updated_at: null })
+    })
+    const put = vi.spyOn(api, 'put').mockResolvedValue(mteamSettings)
+    const user = userEvent.setup()
+    render(<SettingsPage />)
+
+    expect(await screen.findByDisplayValue('https://m-team.example')).toBeInTheDocument()
+    expect(screen.getByDisplayValue('custom-agent/2.0')).toBeInTheDocument()
+    expect(screen.getByDisplayValue('37')).toBeInTheDocument()
+    expect(screen.getByLabelText('Header JSON')).toHaveValue(
+      JSON.stringify(mteamSettings.headers, null, 2),
+    )
+    expect(screen.getByLabelText('Cookie')).toHaveValue('••••••••')
+
+    await user.click(screen.getAllByRole('button', { name: '保存配置' })[0])
+
+    expect(put).toHaveBeenCalledWith('/api/settings/mteam', {
+      base_url: 'https://m-team.example',
+      headers: mteamSettings.headers,
+      cookie: '••••••••',
+      user_agent: 'custom-agent/2.0',
+      timeout: 37,
+    })
+  })
 })

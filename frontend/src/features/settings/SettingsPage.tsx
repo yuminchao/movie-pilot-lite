@@ -2,16 +2,16 @@ import { FormEvent, useEffect, useState } from 'react'
 import { CheckCircle2, Database, FolderDown, PlugZap, Server } from 'lucide-react'
 
 import { api, ApiError } from '../../lib/api'
-import type { DownloadDefaults, MaskedSettings } from '../../lib/types'
+import type { DownloadDefaults, MaskedSettings, MTeamSettings } from '../../lib/types'
 
 export function SettingsPage() {
-  const [mteamStatus, setMteamStatus] = useState<MaskedSettings | null>(null)
+  const [mteamStatus, setMteamStatus] = useState<MTeamSettings | null>(null)
   const [qbStatus, setQbStatus] = useState<MaskedSettings | null>(null)
   const [downloadDefaults, setDownloadDefaults] = useState<DownloadDefaults | null>(null)
 
   useEffect(() => {
     Promise.all([
-      api.get<MaskedSettings>('/api/settings/mteam'),
+      api.get<MTeamSettings>('/api/settings/mteam'),
       api.get<MaskedSettings>('/api/settings/qbittorrent'),
       api.get<DownloadDefaults>('/api/settings/downloads'),
     ]).then(([mteam, qb, defaults]) => {
@@ -25,7 +25,7 @@ export function SettingsPage() {
     <main className="page settings-page">
       <div className="page-heading"><div><h1>连接设置</h1><p>配置 M-Team 认证信息和 qBittorrent Web API</p></div></div>
       <div className="settings-grid">
-        <MTeamForm status={mteamStatus} onSaved={setMteamStatus} />
+        {mteamStatus ? <MTeamForm value={mteamStatus} onSaved={setMteamStatus} /> : null}
         <QbittorrentForm status={qbStatus} onSaved={setQbStatus} />
         {downloadDefaults ? (
           <DownloadDefaultsForm value={downloadDefaults} onSaved={setDownloadDefaults} />
@@ -81,12 +81,12 @@ function StatusLine({ status }: { status: MaskedSettings | null }) {
   )
 }
 
-function MTeamForm({ status, onSaved }: { status: MaskedSettings | null; onSaved: (status: MaskedSettings) => void }) {
-  const [baseUrl, setBaseUrl] = useState('https://kp.m-team.cc')
-  const [headers, setHeaders] = useState('{\n  "x-api-key": ""\n}')
-  const [cookie, setCookie] = useState('')
-  const [userAgent, setUserAgent] = useState('movie-pilot-lite/0.1')
-  const [timeout, setTimeoutValue] = useState(15)
+function MTeamForm({ value, onSaved }: { value: MTeamSettings; onSaved: (value: MTeamSettings) => void }) {
+  const [baseUrl, setBaseUrl] = useState(value.base_url)
+  const [headers, setHeaders] = useState(JSON.stringify(value.headers, null, 2))
+  const [cookie, setCookie] = useState(value.cookie ?? '')
+  const [userAgent, setUserAgent] = useState(value.user_agent ?? '')
+  const [timeout, setTimeoutValue] = useState(value.timeout)
   const [message, setMessage] = useState('')
   const [busy, setBusy] = useState(false)
 
@@ -96,7 +96,12 @@ function MTeamForm({ status, onSaved }: { status: MaskedSettings | null; onSaved
     setMessage('')
     try {
       const parsedHeaders = JSON.parse(headers) as Record<string, string>
-      const result = await api.put<MaskedSettings>('/api/settings/mteam', { base_url: baseUrl, headers: parsedHeaders, cookie: cookie || null, user_agent: userAgent || null, timeout })
+      const result = await api.put<MTeamSettings>('/api/settings/mteam', { base_url: baseUrl, headers: parsedHeaders, cookie: cookie || null, user_agent: userAgent || null, timeout })
+      setBaseUrl(result.base_url)
+      setHeaders(JSON.stringify(result.headers, null, 2))
+      setCookie(result.cookie ?? '')
+      setUserAgent(result.user_agent ?? '')
+      setTimeoutValue(result.timeout)
       onSaved(result)
       setMessage('M-Team 配置已加密保存')
     } catch (reason) {
@@ -118,11 +123,11 @@ function MTeamForm({ status, onSaved }: { status: MaskedSettings | null; onSaved
 
   return (
     <section className="settings-section">
-      <div className="section-title"><span className="section-icon"><Server size={20} /></span><div><h2>M-Team</h2><p>站点搜索和临时下载地址认证</p></div><StatusLine status={status} /></div>
+      <div className="section-title"><span className="section-icon"><Server size={20} /></span><div><h2>M-Team</h2><p>站点搜索和临时下载地址认证</p></div><StatusLine status={value} /></div>
       <form onSubmit={save}>
         <div className="field-row"><label>站点地址<input type="url" value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} required /></label><label>请求超时（秒）<input type="number" min="1" max="60" value={timeout} onChange={(event) => setTimeoutValue(Number(event.target.value))} /></label></div>
         <label>Header JSON<textarea rows={5} value={headers} onChange={(event) => setHeaders(event.target.value)} spellCheck={false} /></label>
-        <label>Cookie<textarea rows={3} value={cookie} onChange={(event) => setCookie(event.target.value)} placeholder={status?.configured ? status.masked ?? '' : 'tp=...; uid=...'} spellCheck={false} /></label>
+        <label>Cookie<textarea rows={3} value={cookie} onChange={(event) => setCookie(event.target.value)} placeholder={value.configured ? value.masked ?? '' : 'tp=...; uid=...'} spellCheck={false} /></label>
         <label>User-Agent<input value={userAgent} onChange={(event) => setUserAgent(event.target.value)} /></label>
         {message ? <p className="settings-message" role="status">{message}</p> : null}
         <div className="form-actions"><button className="secondary-button" type="button" onClick={testConnection}><PlugZap size={16} />测试连接</button><button className="primary-button" type="submit" disabled={busy}>{busy ? '保存中...' : '保存配置'}</button></div>

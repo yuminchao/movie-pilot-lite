@@ -34,6 +34,14 @@ export interface MaskedSettings {
   updated_at: string | null
 }
 
+export interface MTeamSettings extends MaskedSettings {
+  base_url: string
+  headers: Record<string, string>
+  cookie: string | null
+  user_agent: string | null
+  timeout: number
+}
+
 export interface DownloadItem {
   id: number
   title: string
