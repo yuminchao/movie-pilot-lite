@@ -1,22 +1,49 @@
-import { FormEvent, useEffect, useState } from 'react'
+import { FormEvent, useCallback, useEffect, useRef, useState } from 'react'
 import { CheckCircle2, Database, FolderDown, PlugZap, Server } from 'lucide-react'
 
 import { api, ApiError } from '../../lib/api'
 import type { DownloadDefaults, MaskedSettings, MTeamCheckinSettings, MTeamSettings } from '../../lib/types'
 import { MTeamCheckinForm } from './MTeamCheckinForm'
+import { loadCheckinSettings } from './mteamCheckin'
 
 export function SettingsPage() {
   const [mteamStatus, setMteamStatus] = useState<MTeamSettings | null>(null)
   const [mteamCheckin, setMteamCheckin] = useState<MTeamCheckinSettings | null>(null)
+  const [checkinLoading, setCheckinLoading] = useState(true)
+  const [checkinRefreshing, setCheckinRefreshing] = useState(false)
+  const [checkinLoadError, setCheckinLoadError] = useState<string | null>(null)
   const [qbStatus, setQbStatus] = useState<MaskedSettings | null>(null)
   const [downloadDefaults, setDownloadDefaults] = useState<DownloadDefaults | null>(null)
+  const checkinRequestGeneration = useRef(0)
+  const mounted = useRef(false)
+
+  const refreshCheckinSettings = useCallback(async () => {
+    const generation = ++checkinRequestGeneration.current
+    if (!mounted.current) return
+    setCheckinRefreshing(true)
+    setCheckinLoadError(null)
+    try {
+      const result = await loadCheckinSettings()
+      if (mounted.current && generation === checkinRequestGeneration.current) {
+        setMteamCheckin(result)
+      }
+    } catch (reason) {
+      if (mounted.current && generation === checkinRequestGeneration.current) {
+        setCheckinLoadError(
+          reason instanceof ApiError ? `签到设置加载失败：${reason.message}` : '签到设置加载失败',
+        )
+      }
+    } finally {
+      if (mounted.current && generation === checkinRequestGeneration.current) {
+        setCheckinLoading(false)
+        setCheckinRefreshing(false)
+      }
+    }
+  }, [])
 
   useEffect(() => {
     void api.get<MTeamSettings>('/api/settings/mteam')
       .then(setMteamStatus)
-      .catch(() => undefined)
-    void api.get<MTeamCheckinSettings>('/api/settings/mteam/checkin')
-      .then(setMteamCheckin)
       .catch(() => undefined)
     void api.get<MaskedSettings>('/api/settings/qbittorrent')
       .then(setQbStatus)
@@ -26,13 +53,35 @@ export function SettingsPage() {
       .catch(() => undefined)
   }, [])
 
+  useEffect(() => {
+    mounted.current = true
+    void refreshCheckinSettings()
+    const refreshOnFocus = () => { void refreshCheckinSettings() }
+    const interval = window.setInterval(() => {
+      if (document.visibilityState === 'visible') void refreshCheckinSettings()
+    }, 30_000)
+    window.addEventListener('focus', refreshOnFocus)
+    return () => {
+      mounted.current = false
+      checkinRequestGeneration.current += 1
+      window.removeEventListener('focus', refreshOnFocus)
+      window.clearInterval(interval)
+    }
+  }, [refreshCheckinSettings])
+
   return (
     <main className="page settings-page">
       <div className="page-heading"><div><h1>连接设置</h1><p>配置 M-Team 认证信息和 qBittorrent Web API</p></div></div>
       <div className="settings-grid">
         {mteamStatus ? <MTeamForm value={mteamStatus} onSaved={setMteamStatus} /> : null}
         <QbittorrentForm status={qbStatus} onSaved={setQbStatus} />
-        {mteamCheckin ? <MTeamCheckinForm value={mteamCheckin} /> : null}
+        <MTeamCheckinForm
+          value={mteamCheckin}
+          loading={checkinLoading}
+          refreshing={checkinRefreshing}
+          loadError={checkinLoadError}
+          onRefresh={refreshCheckinSettings}
+        />
         {downloadDefaults ? (
           <DownloadDefaultsForm value={downloadDefaults} onSaved={setDownloadDefaults} />
         ) : null}

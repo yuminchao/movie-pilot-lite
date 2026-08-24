@@ -149,6 +149,10 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .checkin-status.error strong { color: var(--danger); }
 .checkin-status-message { overflow-wrap: anywhere; }
 .checkin-form > .settings-message { grid-column: 1 / -1; }
+.checkin-form > .checkin-load-error { grid-column: 1 / -1; }
+.checkin-load-state, .checkin-load-error { min-height: 38px; margin: 0; display: flex; align-items: center; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.checkin-load-state.error, .checkin-load-error { color: var(--danger); }
+.checkin-refresh { flex: 0 0 36px; }
 
 .task-toolbar { margin-bottom: 4px; }
 .task-toolbar > span { color: var(--muted); font-size: 10px; }

@@ -1,6 +1,7 @@
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { StrictMode } from 'react'
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { App } from './App'
 import { SearchPage } from './features/search/SearchPage'
@@ -10,6 +11,10 @@ import { api, ApiError } from './lib/api'
 describe('App', () => {
   beforeEach(() => {
     vi.restoreAllMocks()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
   })
 
   it('shows administrator setup before protected pages', async () => {
@@ -444,13 +449,25 @@ describe('App', () => {
     const checkinSettings = {
       enabled: true,
       execution_time: '09:30',
-      last_attempt_at: '2026-08-24T01:30:00Z',
+      last_attempt_at: '2026-08-24T09:30:00',
       last_success_date: '2026-08-24',
       success: true,
       message: '签到成功',
     }
+    const savedSettings = { ...checkinSettings, enabled: false, execution_time: '21:45' }
+    const refreshedSettings = {
+      ...savedSettings,
+      last_attempt_at: '2026-08-25T21:45:00',
+      last_success_date: null,
+      success: false,
+      message: '今日已签到',
+    }
+    let checkinGetCount = 0
     vi.spyOn(api, 'get').mockImplementation((path) => {
-      if (path === '/api/settings/mteam/checkin') return Promise.resolve(checkinSettings)
+      if (path === '/api/settings/mteam/checkin') {
+        checkinGetCount += 1
+        return Promise.resolve(checkinGetCount === 1 ? checkinSettings : refreshedSettings)
+      }
       if (path === '/api/settings/mteam') {
         return Promise.resolve({
           configured: true,
@@ -472,7 +489,6 @@ describe('App', () => {
       }
       return Promise.resolve({ configured: false, masked: null, updated_at: null })
     })
-    const savedSettings = { ...checkinSettings, enabled: false, execution_time: '21:45' }
     const put = vi.spyOn(api, 'put').mockResolvedValue(savedSettings)
     const user = userEvent.setup()
     render(<SettingsPage />)
@@ -481,7 +497,7 @@ describe('App', () => {
     expect(enabled).toBeChecked()
     expect(screen.getByLabelText('签到时间')).toHaveValue('09:30')
     expect(screen.getByText('最近签到成功')).toBeInTheDocument()
-    expect(screen.getByText(new Date(checkinSettings.last_attempt_at).toLocaleString('zh-CN'))).toBeInTheDocument()
+    expect(screen.getByText('2026/8/24 09:30:00')).toBeInTheDocument()
     expect(screen.getByText('签到成功')).toBeInTheDocument()
 
     await user.click(enabled)
@@ -493,6 +509,9 @@ describe('App', () => {
       enabled: false,
       execution_time: '21:45',
     })
+    expect(await screen.findByText('最近签到失败')).toBeInTheDocument()
+    expect(screen.getByText('2026/8/25 21:45:00')).toBeInTheDocument()
+    expect(checkinGetCount).toBe(2)
   })
 
   it('keeps M-Team settings visible when check-in settings fail to load', async () => {
@@ -517,13 +536,202 @@ describe('App', () => {
           start: true,
         })
       }
+      if (path === '/api/settings/qbittorrent') {
+        return Promise.resolve({ configured: true, masked: '••••••••', updated_at: null })
+      }
       return Promise.resolve({ configured: false, masked: null, updated_at: null })
     })
 
     render(<SettingsPage />)
 
     expect(await screen.findByDisplayValue('https://available-mteam.example')).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: 'qBittorrent' })).toBeInTheDocument()
+    expect(screen.getByLabelText('默认分类')).toHaveValue('downloads')
+    const qbSection = screen.getByRole('heading', { name: 'qBittorrent' }).closest('section')
+    expect(qbSection).not.toBeNull()
+    expect(within(qbSection!).getByText('已配置')).toBeInTheDocument()
+    expect(screen.getByRole('alert')).toHaveTextContent('签到设置加载失败')
+  })
+
+  it('retries a failed check-in settings request and restores the form', async () => {
+    const checkinSettings = {
+      enabled: true,
+      execution_time: '08:45',
+      last_attempt_at: null,
+      last_success_date: null,
+      success: null,
+      message: null,
+    }
+    let attempts = 0
+    vi.spyOn(api, 'get').mockImplementation((path) => {
+      if (path === '/api/settings/mteam/checkin') {
+        attempts += 1
+        return attempts === 1
+          ? Promise.reject(new ApiError('签到状态暂不可用', 503))
+          : Promise.resolve(checkinSettings)
+      }
+      return Promise.reject(new Error(`${path} unavailable`))
+    })
+    const user = userEvent.setup()
+    render(<SettingsPage />)
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('签到状态暂不可用')
+    await user.click(screen.getByRole('button', { name: '重试加载签到设置' }))
+
+    expect(await screen.findByLabelText('每日自动签到')).toBeChecked()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('ignores an older check-in refresh that resolves after a newer focus refresh', async () => {
+    const initialSettings = {
+      enabled: true,
+      execution_time: '09:30',
+      last_attempt_at: null,
+      last_success_date: null,
+      success: null,
+      message: null,
+    }
+    const olderSettings = {
+      ...initialSettings,
+      last_attempt_at: '2026-08-24T09:30:00',
+      success: false,
+      message: '旧状态',
+    }
+    const newerSettings = {
+      ...initialSettings,
+      last_attempt_at: '2026-08-25T09:30:00',
+      last_success_date: '2026-08-25',
+      success: true,
+      message: '新状态',
+    }
+    let resolveOlder!: (value: typeof olderSettings) => void
+    let resolveNewer!: (value: typeof newerSettings) => void
+    let checkinGetCount = 0
+    vi.spyOn(api, 'get').mockImplementation((path) => {
+      if (path !== '/api/settings/mteam/checkin') return Promise.reject(new Error(`${path} unavailable`))
+      checkinGetCount += 1
+      if (checkinGetCount === 1) return Promise.resolve(initialSettings)
+      if (checkinGetCount === 2) return new Promise((resolve) => { resolveOlder = resolve })
+      return new Promise((resolve) => { resolveNewer = resolve })
+    })
+    const user = userEvent.setup()
+    render(<SettingsPage />)
+
+    await screen.findByLabelText('每日自动签到')
+    await user.click(screen.getByRole('button', { name: '刷新签到状态' }))
+    act(() => { window.dispatchEvent(new Event('focus')) })
+    await act(async () => { resolveNewer(newerSettings) })
+    expect(screen.getByText('新状态')).toBeInTheDocument()
+
+    await act(async () => { resolveOlder(olderSettings) })
+    expect(screen.getByText('新状态')).toBeInTheDocument()
+    expect(screen.queryByText('旧状态')).not.toBeInTheDocument()
+  })
+
+  it('polls check-in settings while visible and clears polling on unmount', async () => {
+    vi.useFakeTimers()
+    const checkinSettings = {
+      enabled: true,
+      execution_time: '09:30',
+      last_attempt_at: null,
+      last_success_date: null,
+      success: null,
+      message: null,
+    }
+    let resolvePoll!: (value: typeof checkinSettings) => void
+    let checkinGetCount = 0
+    vi.spyOn(api, 'get').mockImplementation((path) => {
+      if (path !== '/api/settings/mteam/checkin') return Promise.reject(new Error(`${path} unavailable`))
+      checkinGetCount += 1
+      return checkinGetCount === 1
+        ? Promise.resolve(checkinSettings)
+        : new Promise((resolve) => { resolvePoll = resolve })
+    })
+    const { unmount } = render(<SettingsPage />)
+    await act(async () => undefined)
+    expect(screen.getByLabelText('每日自动签到')).toBeInTheDocument()
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000) })
+    expect(checkinGetCount).toBe(2)
+    unmount()
+    await act(async () => { resolvePoll(checkinSettings) })
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(checkinGetCount).toBe(2)
+  })
+
+  it('does not refresh check-in state after a pending save resolves on unmount', async () => {
+    const checkinSettings = {
+      enabled: true,
+      execution_time: '09:30',
+      last_attempt_at: null,
+      last_success_date: null,
+      success: null,
+      message: null,
+    }
+    let checkinGetCount = 0
+    vi.spyOn(api, 'get').mockImplementation((path) => {
+      if (path === '/api/settings/mteam/checkin') {
+        checkinGetCount += 1
+        return Promise.resolve(checkinSettings)
+      }
+      return Promise.reject(new Error(`${path} unavailable`))
+    })
+    let resolveSave!: (value: typeof checkinSettings) => void
+    vi.spyOn(api, 'put').mockImplementation(
+      () => new Promise((resolve) => { resolveSave = resolve }),
+    )
+    const user = userEvent.setup()
+    const { unmount } = render(<SettingsPage />)
+
+    await screen.findByLabelText('每日自动签到')
+    await user.click(screen.getByRole('button', { name: '保存签到设置' }))
+    unmount()
+    await act(async () => { resolveSave(checkinSettings) })
+
+    expect(checkinGetCount).toBe(1)
+  })
+
+  it('handles a check-in save after StrictMode replays effects', async () => {
+    const checkinSettings = {
+      enabled: true,
+      execution_time: '09:30',
+      last_attempt_at: null,
+      last_success_date: null,
+      success: null,
+      message: null,
+    }
+    vi.spyOn(api, 'get').mockImplementation((path) =>
+      path === '/api/settings/mteam/checkin'
+        ? Promise.resolve(checkinSettings)
+        : Promise.reject(new Error(`${path} unavailable`)),
+    )
+    vi.spyOn(api, 'put').mockResolvedValue(checkinSettings)
+    const user = userEvent.setup()
+    render(<StrictMode><SettingsPage /></StrictMode>)
+
+    await screen.findByLabelText('每日自动签到')
+    await user.click(screen.getByRole('button', { name: '保存签到设置' }))
+
+    expect(await screen.findByText('签到设置已保存')).toBeInTheDocument()
+  })
+
+  it('shows an explicit fallback for an invalid check-in attempt time', async () => {
+    vi.spyOn(api, 'get').mockImplementation((path) => {
+      if (path === '/api/settings/mteam/checkin') {
+        return Promise.resolve({
+          enabled: true,
+          execution_time: '09:30',
+          last_attempt_at: 'not-a-date',
+          last_success_date: null,
+          success: false,
+          message: '签到失败',
+        })
+      }
+      return Promise.reject(new Error(`${path} unavailable`))
+    })
+
+    render(<SettingsPage />)
+
+    expect(await screen.findByText('时间未知')).toBeInTheDocument()
   })
 
   it('disables check-in controls while saving and syncs the response', async () => {
