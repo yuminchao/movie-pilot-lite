@@ -1,5 +1,6 @@
 import json
 from collections.abc import Callable
+from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
@@ -8,6 +9,20 @@ from sqlalchemy.orm import Session
 
 from app.config.crypto import SecretCipher
 from app.db.models import AppConfig
+
+
+def _as_utc(value: datetime) -> datetime:
+    """将 SQLite 审计时间解释并转换为 UTC。
+
+    Args:
+        value: SQLite 返回的 naive UTC 或其他带时区时间。
+
+    Returns:
+        带 UTC 时区且表示同一瞬间的时间。
+    """
+    if value.tzinfo is None or value.utcoffset() is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
 
 
 class ConfigKey(StrEnum):
@@ -66,7 +81,7 @@ class ConfigRepository:
             return {
                 "configured": True,
                 "masked": "••••••••",
-                "updated_at": record.mtime.isoformat(),
+                "updated_at": _as_utc(record.mtime).isoformat(),
             }
 
     @staticmethod
