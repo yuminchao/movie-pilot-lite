@@ -120,6 +120,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .section-icon { width: 40px; height: 40px; display: grid; place-items: center; border-radius: var(--radius); background: #eaf1fd; color: var(--accent); }
 .section-icon.qb { color: var(--success); background: #e8f7f1; }
 .section-icon.defaults { color: #8a4d10; background: #fff1df; }
+.section-icon.checkin { color: #8a4d10; background: #fff1df; }
 .section-title h2 { margin: 0 0 4px; font-size: 16px; }
 .section-title p { margin: 0; color: var(--muted); font-size: 11px; }
 .connection-status { display: grid; grid-template-columns: auto auto; gap: 3px 6px; color: #7a8494; font-size: 10px; }
@@ -132,11 +133,22 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .settings-section textarea { resize: vertical; font-family: "Cascadia Code", Consolas, monospace; line-height: 1.5; }
 .form-actions { display: flex; justify-content: flex-end; gap: 9px; padding-top: 5px; }
 .settings-message { min-height: 20px; margin: 0; color: #4e596b; font-size: 11px; }
+.settings-message.error { color: var(--danger); }
 .security-note { margin-top: 16px; display: flex; align-items: center; gap: 10px; color: #667085; font-size: 11px; }
-.defaults-section { grid-column: 1 / -1; }
+.defaults-section, .checkin-section { grid-column: 1 / -1; }
 .defaults-form { grid-template-columns: 1fr 1.5fr 1fr auto; align-items: end; }
 .defaults-form select { height: 38px; border: 1px solid #cbd2dc; border-radius: var(--radius); background: #fff; padding: 0 10px; }
 .defaults-form .settings-message { grid-column: 1 / -1; }
+.checkin-form { grid-template-columns: minmax(280px, 1fr) minmax(240px, 1.5fr) auto; align-items: center; }
+.checkin-controls { display: grid; grid-template-columns: minmax(150px, 1fr) minmax(120px, 180px); gap: 16px; align-items: end; }
+.settings-section .checkin-toggle { display: flex; align-items: center; gap: 9px; min-height: 38px; }
+.settings-section .checkin-toggle input { width: 16px; height: 16px; margin: 0; }
+.checkin-status { min-width: 0; display: grid; gap: 4px; color: var(--muted); font-size: 11px; }
+.checkin-status strong { color: var(--text); font-size: 12px; }
+.checkin-status.success strong { color: var(--success); }
+.checkin-status.error strong { color: var(--danger); }
+.checkin-status-message { overflow-wrap: anywhere; }
+.checkin-form > .settings-message { grid-column: 1 / -1; }
 
 .task-toolbar { margin-bottom: 4px; }
 .task-toolbar > span { color: var(--muted); font-size: 10px; }
@@ -158,8 +170,9 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 
 @media (max-width: 900px) {
   .settings-grid { grid-template-columns: 1fr; }
-  .defaults-section { grid-column: auto; }
+  .defaults-section, .checkin-section { grid-column: auto; }
   .defaults-form { grid-template-columns: 1fr 1fr; }
+  .checkin-form { grid-template-columns: 1fr; }
   .result-header { display: none; }
   .result-row { grid-template-columns: 1fr 72px; gap: 8px 12px; padding: 13px; }
   .result-title { grid-column: 1 / -1; }
@@ -194,6 +207,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   .download-options { grid-template-columns: 120px minmax(0, 1fr); }
   .field-row { grid-template-columns: 1fr; }
   .defaults-form { grid-template-columns: 1fr; }
+  .checkin-controls { grid-template-columns: 1fr; }
   .section-title { grid-template-columns: 40px 1fr; }
   .connection-status { grid-column: 2; }
   .task-meta { align-items: flex-start; flex-direction: column; gap: 5px; }

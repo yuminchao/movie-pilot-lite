@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { App } from './App'
 import { SearchPage } from './features/search/SearchPage'
 import { SettingsPage } from './features/settings/SettingsPage'
-import { api } from './lib/api'
+import { api, ApiError } from './lib/api'
 
 describe('App', () => {
   beforeEach(() => {
@@ -438,5 +438,177 @@ describe('App', () => {
     expect(screen.getByLabelText('Cookie')).toBeEnabled()
     expect(screen.getByLabelText('User-Agent')).toBeEnabled()
     expect(screen.getByLabelText('请求超时（秒）')).toBeEnabled()
+  })
+
+  it('loads and saves M-Team daily check-in settings', async () => {
+    const checkinSettings = {
+      enabled: true,
+      execution_time: '09:30',
+      last_attempt_at: '2026-08-24T01:30:00Z',
+      last_success_date: '2026-08-24',
+      success: true,
+      message: '签到成功',
+    }
+    vi.spyOn(api, 'get').mockImplementation((path) => {
+      if (path === '/api/settings/mteam/checkin') return Promise.resolve(checkinSettings)
+      if (path === '/api/settings/mteam') {
+        return Promise.resolve({
+          configured: true,
+          masked: '••••••••',
+          updated_at: null,
+          base_url: 'https://m-team.example',
+          headers: {},
+          cookie: '••••••••',
+          user_agent: null,
+          timeout: 30,
+        })
+      }
+      if (path === '/api/settings/downloads') {
+        return Promise.resolve({
+          category: 'downloads',
+          save_paths: { movie: '/downloads', tv: '/downloads', music: '/downloads', other: '/downloads' },
+          start: true,
+        })
+      }
+      return Promise.resolve({ configured: false, masked: null, updated_at: null })
+    })
+    const savedSettings = { ...checkinSettings, enabled: false, execution_time: '21:45' }
+    const put = vi.spyOn(api, 'put').mockResolvedValue(savedSettings)
+    const user = userEvent.setup()
+    render(<SettingsPage />)
+
+    const enabled = await screen.findByLabelText('每日自动签到')
+    expect(enabled).toBeChecked()
+    expect(screen.getByLabelText('签到时间')).toHaveValue('09:30')
+    expect(screen.getByText('最近签到成功')).toBeInTheDocument()
+    expect(screen.getByText(new Date(checkinSettings.last_attempt_at).toLocaleString('zh-CN'))).toBeInTheDocument()
+    expect(screen.getByText('签到成功')).toBeInTheDocument()
+
+    await user.click(enabled)
+    await user.clear(screen.getByLabelText('签到时间'))
+    await user.type(screen.getByLabelText('签到时间'), '21:45')
+    await user.click(screen.getByRole('button', { name: '保存签到设置' }))
+
+    expect(put).toHaveBeenCalledWith('/api/settings/mteam/checkin', {
+      enabled: false,
+      execution_time: '21:45',
+    })
+  })
+
+  it('keeps M-Team settings visible when check-in settings fail to load', async () => {
+    vi.spyOn(api, 'get').mockImplementation((path) => {
+      if (path === '/api/settings/mteam/checkin') return Promise.reject(new Error('check-in unavailable'))
+      if (path === '/api/settings/mteam') {
+        return Promise.resolve({
+          configured: true,
+          masked: '••••••••',
+          updated_at: null,
+          base_url: 'https://available-mteam.example',
+          headers: {},
+          cookie: '••••••••',
+          user_agent: null,
+          timeout: 30,
+        })
+      }
+      if (path === '/api/settings/downloads') {
+        return Promise.resolve({
+          category: 'downloads',
+          save_paths: { movie: '/downloads', tv: '/downloads', music: '/downloads', other: '/downloads' },
+          start: true,
+        })
+      }
+      return Promise.resolve({ configured: false, masked: null, updated_at: null })
+    })
+
+    render(<SettingsPage />)
+
+    expect(await screen.findByDisplayValue('https://available-mteam.example')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'qBittorrent' })).toBeInTheDocument()
+  })
+
+  it('disables check-in controls while saving and syncs the response', async () => {
+    const initialSettings = {
+      enabled: true,
+      execution_time: '09:30',
+      last_attempt_at: null,
+      last_success_date: null,
+      success: null,
+      message: null,
+    }
+    const savedSettings = { ...initialSettings, enabled: false, execution_time: '21:45' }
+    vi.spyOn(api, 'get').mockImplementation((path) => {
+      if (path === '/api/settings/mteam/checkin') return Promise.resolve(initialSettings)
+      return Promise.reject(new Error(`${path} unavailable`))
+    })
+    let resolveSave!: (value: typeof savedSettings) => void
+    vi.spyOn(api, 'put').mockImplementation(
+      () => new Promise((resolve) => { resolveSave = resolve }),
+    )
+    const user = userEvent.setup()
+    render(<SettingsPage />)
+
+    const enabled = await screen.findByLabelText('每日自动签到')
+    await user.click(enabled)
+    await user.clear(screen.getByLabelText('签到时间'))
+    await user.type(screen.getByLabelText('签到时间'), '21:45')
+    await user.click(screen.getByRole('button', { name: '保存签到设置' }))
+
+    expect(enabled).toBeDisabled()
+    expect(screen.getByLabelText('签到时间')).toBeDisabled()
+    await act(async () => { resolveSave(savedSettings) })
+    expect(enabled).toBeEnabled()
+    expect(enabled).not.toBeChecked()
+    expect(screen.getByLabelText('签到时间')).toBeEnabled()
+    expect(screen.getByLabelText('签到时间')).toHaveValue('21:45')
+  })
+
+  it('restores check-in controls and shows a safe API error when saving fails', async () => {
+    const checkinSettings = {
+      enabled: true,
+      execution_time: '09:30',
+      last_attempt_at: null,
+      last_success_date: null,
+      success: null,
+      message: null,
+    }
+    vi.spyOn(api, 'get').mockImplementation((path) => {
+      if (path === '/api/settings/mteam/checkin') return Promise.resolve(checkinSettings)
+      return Promise.reject(new Error(`${path} unavailable`))
+    })
+    let rejectSave!: (reason: Error) => void
+    vi.spyOn(api, 'put').mockImplementation(
+      () => new Promise((_, reject) => { rejectSave = reject }),
+    )
+    const user = userEvent.setup()
+    render(<SettingsPage />)
+
+    const enabled = await screen.findByLabelText('每日自动签到')
+    await user.click(screen.getByRole('button', { name: '保存签到设置' }))
+    expect(enabled).toBeDisabled()
+
+    await act(async () => { rejectSave(new ApiError('签到配置保存失败', 400)) })
+    expect(enabled).toBeEnabled()
+    expect(screen.getByLabelText('签到时间')).toBeEnabled()
+    expect(screen.getByRole('alert')).toHaveTextContent('签到配置保存失败')
+  })
+
+  it('shows a never-run status before the first check-in attempt', async () => {
+    vi.spyOn(api, 'get').mockImplementation((path) => {
+      if (path === '/api/settings/mteam/checkin') {
+        return Promise.resolve({
+          enabled: false,
+          execution_time: '09:30',
+          last_attempt_at: null,
+          last_success_date: null,
+          success: null,
+          message: null,
+        })
+      }
+      return Promise.reject(new Error(`${path} unavailable`))
+    })
+
+    render(<SettingsPage />)
+
+    expect(await screen.findByText('尚未执行')).toBeInTheDocument()
   })
 })

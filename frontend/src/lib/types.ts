@@ -43,6 +43,15 @@ export interface MTeamSettings extends MaskedSettings {
   timeout: number
 }
 
+export interface MTeamCheckinSettings {
+  enabled: boolean
+  execution_time: string
+  last_attempt_at: string | null
+  last_success_date: string | null
+  success: boolean | null
+  message: string | null
+}
+
 export interface DownloadItem {
   id: number
   title: string

@@ -2,16 +2,21 @@ import { FormEvent, useEffect, useState } from 'react'
 import { CheckCircle2, Database, FolderDown, PlugZap, Server } from 'lucide-react'
 
 import { api, ApiError } from '../../lib/api'
-import type { DownloadDefaults, MaskedSettings, MTeamSettings } from '../../lib/types'
+import type { DownloadDefaults, MaskedSettings, MTeamCheckinSettings, MTeamSettings } from '../../lib/types'
+import { MTeamCheckinForm } from './MTeamCheckinForm'
 
 export function SettingsPage() {
   const [mteamStatus, setMteamStatus] = useState<MTeamSettings | null>(null)
+  const [mteamCheckin, setMteamCheckin] = useState<MTeamCheckinSettings | null>(null)
   const [qbStatus, setQbStatus] = useState<MaskedSettings | null>(null)
   const [downloadDefaults, setDownloadDefaults] = useState<DownloadDefaults | null>(null)
 
   useEffect(() => {
     void api.get<MTeamSettings>('/api/settings/mteam')
       .then(setMteamStatus)
+      .catch(() => undefined)
+    void api.get<MTeamCheckinSettings>('/api/settings/mteam/checkin')
+      .then(setMteamCheckin)
       .catch(() => undefined)
     void api.get<MaskedSettings>('/api/settings/qbittorrent')
       .then(setQbStatus)
@@ -27,6 +32,7 @@ export function SettingsPage() {
       <div className="settings-grid">
         {mteamStatus ? <MTeamForm value={mteamStatus} onSaved={setMteamStatus} /> : null}
         <QbittorrentForm status={qbStatus} onSaved={setQbStatus} />
+        {mteamCheckin ? <MTeamCheckinForm value={mteamCheckin} /> : null}
         {downloadDefaults ? (
           <DownloadDefaultsForm value={downloadDefaults} onSaved={setDownloadDefaults} />
         ) : null}
