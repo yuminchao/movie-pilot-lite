@@ -456,3 +456,66 @@ def test_updating_checkin_settings_preserves_runtime_status(client) -> None:
     assert persisted is not None
     assert persisted["attempt_date"] == "2026-08-24"
     assert persisted["attempts_on_date"] == 1
+
+
+def test_successful_mteam_save_wakes_checkin_scheduler(client) -> None:
+    _login(client)
+    scheduler = Mock()
+    client.app.state.checkin_scheduler = scheduler
+
+    response = client.put(
+        "/api/settings/mteam",
+        json={
+            "base_url": "https://m-team.test",
+            "headers": {"x-api-key": "secret"},
+            "cookie": "tp=secret",
+        },
+    )
+
+    assert response.status_code == 200
+    scheduler.wake.assert_called_once_with()
+
+
+def test_failed_mteam_save_does_not_wake_checkin_scheduler(client) -> None:
+    _login(client)
+    scheduler = Mock()
+    client.app.state.checkin_scheduler = scheduler
+
+    response = client.put(
+        "/api/settings/mteam",
+        json={
+            "base_url": "https://m-team.test",
+            "headers": {"x-api-key": MASKED_VALUE},
+        },
+    )
+
+    assert response.status_code == 422
+    scheduler.wake.assert_not_called()
+
+
+def test_successful_checkin_save_wakes_checkin_scheduler(client) -> None:
+    _login(client)
+    scheduler = Mock()
+    client.app.state.checkin_scheduler = scheduler
+
+    response = client.put(
+        "/api/settings/mteam/checkin",
+        json={"enabled": True, "execution_time": "07:05"},
+    )
+
+    assert response.status_code == 200
+    scheduler.wake.assert_called_once_with()
+
+
+def test_failed_checkin_save_does_not_wake_checkin_scheduler(client) -> None:
+    _login(client)
+    scheduler = Mock()
+    client.app.state.checkin_scheduler = scheduler
+
+    response = client.put(
+        "/api/settings/mteam/checkin",
+        json={"enabled": True, "execution_time": "invalid"},
+    )
+
+    assert response.status_code == 422
+    scheduler.wake.assert_not_called()

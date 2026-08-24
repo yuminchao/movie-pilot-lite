@@ -1,6 +1,10 @@
+import threading
+from unittest.mock import Mock
+
 from app.auth.session import SESSION_COOKIE
 from fastapi.testclient import TestClient
 
+import app.main as main_module
 from app.main import create_app
 
 
@@ -85,3 +89,37 @@ def test_repeated_login_failures_are_rate_limited(client) -> None:
 
     assert response.status_code == 429
     assert response.json() == {"detail": "登录尝试过于频繁，请稍后重试"}
+
+
+def test_application_lifespan_starts_and_stops_checkin_scheduler(tmp_path) -> None:
+    application = create_app(f"sqlite:///{tmp_path / 'lifespan.db'}")
+    scheduler = application.state.checkin_scheduler
+
+    assert scheduler.is_running is False
+    with TestClient(application):
+        assert scheduler.is_running is True
+    assert scheduler.is_running is False
+
+
+def test_successful_login_wakes_locked_checkin_scheduler(tmp_path, monkeypatch) -> None:
+    run_called = threading.Event()
+    checkin_service = Mock()
+    checkin_service.run_due.side_effect = lambda _: run_called.set()
+    checkin_service.seconds_until_next.return_value = 3600
+    constructor = Mock(return_value=checkin_service)
+    monkeypatch.setattr(main_module, "CheckinService", constructor)
+    application = create_app(f"sqlite:///{tmp_path / 'unlock.db'}")
+
+    with TestClient(application) as test_client:
+        test_client.post(
+            "/api/auth/setup",
+            json={"password": "correct horse battery"},
+        )
+        response = test_client.post(
+            "/api/auth/login",
+            json={"password": "correct horse battery"},
+        )
+        assert response.status_code == 204
+        assert run_called.wait(timeout=1)
+
+    constructor.assert_called_once()

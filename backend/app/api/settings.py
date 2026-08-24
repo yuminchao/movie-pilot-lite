@@ -100,12 +100,13 @@ def get_mteam(
 @router.put("/mteam")
 def save_mteam(
     payload: MTeamSettingsRequest,
+    request: Request,
     _: str = Depends(require_session),
     service: SettingsService = Depends(get_settings_service),
 ) -> dict[str, Any]:
     """加密保存 M-Team 连接配置。"""
     try:
-        return service.save_mteam(
+        result = service.save_mteam(
             {
                 **payload.model_dump(),
                 "base_url": str(payload.base_url).rstrip("/"),
@@ -116,6 +117,8 @@ def save_mteam(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=str(error),
         ) from error
+    request.app.state.checkin_scheduler.wake()
+    return result
 
 
 def get_checkin_service(request: Request) -> CheckinService:
@@ -171,11 +174,14 @@ def get_mteam_checkin(
 @router.put("/mteam/checkin")
 def save_mteam_checkin(
     payload: MTeamCheckinSettingsRequest,
+    request: Request,
     _: str = Depends(require_session),
     service: CheckinService = Depends(get_checkin_service),
 ) -> dict[str, Any]:
     """保存 M-Team 每日签到开关和执行时间。"""
-    return service.save_settings(payload.enabled, payload.execution_time)
+    result = service.save_settings(payload.enabled, payload.execution_time)
+    request.app.state.checkin_scheduler.wake()
+    return result
 
 
 @router.get("/qbittorrent")

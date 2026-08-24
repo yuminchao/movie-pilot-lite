@@ -1,5 +1,6 @@
 import os
 import secrets
+from contextlib import asynccontextmanager
 from pathlib import Path
 from threading import RLock
 from zoneinfo import ZoneInfo
@@ -21,6 +22,7 @@ from app.integrations.qbittorrent import (
     QbittorrentError,
 )
 from app.services.checkin import CheckinService
+from app.services.checkin_scheduler import CheckinScheduler
 from app.services.downloads import DownloadService
 from app.services.search import SearchService
 from app.services.tokens import SourceTokenCodec
@@ -40,17 +42,7 @@ def create_app(
     database = Database(url)
     database.create_schema()
     vault = SecretVault()
-    service = AuthService(
-        database,
-        on_unlock=vault.unlock,
-        is_unlocked=lambda: vault.is_unlocked,
-    )
     token_codec = SourceTokenCodec(secrets.token_bytes(32))
-    application = FastAPI(title="movie-pilot-lite")
-    application.state.auth_service = service
-    application.state.database = database
-    application.state.secret_vault = vault
-    application.dependency_overrides[auth.get_auth_service] = lambda: service
 
     def repository() -> ConfigRepository:
         """使用当前登录解锁的密钥构造配置仓库。"""
@@ -79,7 +71,33 @@ def create_app(
                 )
             return checkin_instance
 
+    checkin_scheduler = CheckinScheduler(
+        checkin_service,
+        lambda: vault.is_unlocked,
+    )
+    vault.add_unlock_listener(checkin_scheduler.wake)
+    service = AuthService(
+        database,
+        on_unlock=vault.unlock,
+        is_unlocked=lambda: vault.is_unlocked,
+    )
+
+    @asynccontextmanager
+    async def lifespan(_: FastAPI):
+        """在应用生命周期内启动并完整停止签到调度器。"""
+        checkin_scheduler.start()
+        try:
+            yield
+        finally:
+            await checkin_scheduler.stop()
+
+    application = FastAPI(title="movie-pilot-lite", lifespan=lifespan)
+    application.state.auth_service = service
+    application.state.database = database
+    application.state.secret_vault = vault
     application.state.get_checkin_service = checkin_service
+    application.state.checkin_scheduler = checkin_scheduler
+    application.dependency_overrides[auth.get_auth_service] = lambda: service
 
     def mteam_client() -> MTeamClient:
         """从加密配置构造 M-Team 客户端。"""
