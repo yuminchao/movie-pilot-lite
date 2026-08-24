@@ -7,6 +7,7 @@ import { App } from './App'
 import { SearchPage } from './features/search/SearchPage'
 import { SettingsPage } from './features/settings/SettingsPage'
 import { api, ApiError } from './lib/api'
+import type { MTeamCheckinSettings } from './lib/types'
 
 describe('App', () => {
   beforeEach(() => {
@@ -174,12 +175,19 @@ describe('App', () => {
 
     await user.type(screen.getByRole('searchbox'), '海报')
     await user.click(screen.getByRole('button', { name: '搜索' }))
-    expect(await screen.findByTestId('poster-fallback')).toBeInTheDocument()
+    const missingThumbnail = await screen.findByTestId('poster-fallback')
+    expect(missingThumbnail).toHaveAttribute('aria-hidden', 'true')
+    expect(screen.queryByRole('img', { name: '缺失海报 海报不可用' })).not.toBeInTheDocument()
 
-    fireEvent.error(screen.getByAltText('失败海报 海报'))
+    await user.click(screen.getByText('缺失海报'))
+    expect(screen.getByRole('img', { name: '缺失海报 海报不可用' })).toBeInTheDocument()
+    expect(screen.getByText('缺失海报').closest('button')).not.toHaveAccessibleName(/海报不可用/)
 
-    expect(screen.getAllByTestId('poster-fallback')).toHaveLength(2)
-    expect(screen.queryByAltText('失败海报 海报')).not.toBeInTheDocument()
+    await user.click(screen.getByText('失败海报'))
+    fireEvent.error(screen.getByRole('img', { name: '失败海报 海报' }))
+
+    expect(screen.getByRole('img', { name: '失败海报 海报不可用' })).toBeInTheDocument()
+    expect(screen.getByText('失败海报').closest('button')).not.toHaveAccessibleName(/海报不可用/)
   })
 
   it('recovers a failed poster when its source changes', async () => {
@@ -581,7 +589,7 @@ describe('App', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
-  it('ignores an older check-in refresh that resolves after a newer focus refresh', async () => {
+  it('syncs clean check-in controls when focus loads settings changed elsewhere', async () => {
     const initialSettings = {
       enabled: true,
       execution_time: '09:30',
@@ -590,11 +598,96 @@ describe('App', () => {
       success: null,
       message: null,
     }
-    const olderSettings = {
+    const refreshedSettings = { ...initialSettings, enabled: false, execution_time: '18:20' }
+    let checkinGetCount = 0
+    vi.spyOn(api, 'get').mockImplementation((path) => {
+      if (path !== '/api/settings/mteam/checkin') return Promise.reject(new Error(`${path} unavailable`))
+      checkinGetCount += 1
+      return Promise.resolve(checkinGetCount === 1 ? initialSettings : refreshedSettings)
+    })
+    render(<SettingsPage />)
+
+    await screen.findByLabelText('每日自动签到')
+    act(() => { window.dispatchEvent(new Event('focus')) })
+
+    expect(await screen.findByDisplayValue('18:20')).toBeInTheDocument()
+    expect(screen.getByLabelText('每日自动签到')).not.toBeChecked()
+  })
+
+  it('preserves dirty check-in controls when polling loads settings changed elsewhere', async () => {
+    vi.useFakeTimers()
+    const initialSettings = {
+      enabled: true,
+      execution_time: '09:30',
+      last_attempt_at: null,
+      last_success_date: null,
+      success: null,
+      message: null,
+    }
+    const refreshedSettings = { ...initialSettings, enabled: true, execution_time: '18:20' }
+    let checkinGetCount = 0
+    vi.spyOn(api, 'get').mockImplementation((path) => {
+      if (path !== '/api/settings/mteam/checkin') return Promise.reject(new Error(`${path} unavailable`))
+      checkinGetCount += 1
+      return Promise.resolve(checkinGetCount === 1 ? initialSettings : refreshedSettings)
+    })
+    render(<SettingsPage />)
+
+    await act(async () => undefined)
+    fireEvent.click(screen.getByLabelText('每日自动签到'))
+    fireEvent.change(screen.getByLabelText('签到时间'), { target: { value: '12:40' } })
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000) })
+
+    expect(screen.getByLabelText('每日自动签到')).not.toBeChecked()
+    expect(screen.getByLabelText('签到时间')).toHaveValue('12:40')
+  })
+
+  it('resumes syncing check-in controls when refresh follows a successful save', async () => {
+    const initialSettings = {
+      enabled: true,
+      execution_time: '09:30',
+      last_attempt_at: null,
+      last_success_date: null,
+      success: null,
+      message: null,
+    }
+    const savedSettings = { ...initialSettings, enabled: false, execution_time: '12:40' }
+    const refreshedSettings = { ...savedSettings, enabled: true, execution_time: '20:15' }
+    let checkinGetCount = 0
+    vi.spyOn(api, 'get').mockImplementation((path) => {
+      if (path !== '/api/settings/mteam/checkin') return Promise.reject(new Error(`${path} unavailable`))
+      checkinGetCount += 1
+      return Promise.resolve(checkinGetCount === 1 ? initialSettings : refreshedSettings)
+    })
+    vi.spyOn(api, 'put').mockResolvedValue(savedSettings)
+    const user = userEvent.setup()
+    render(<SettingsPage />)
+
+    await screen.findByLabelText('每日自动签到')
+    await user.click(screen.getByLabelText('每日自动签到'))
+    await user.clear(screen.getByLabelText('签到时间'))
+    await user.type(screen.getByLabelText('签到时间'), '12:40')
+    await user.click(screen.getByRole('button', { name: '保存签到设置' }))
+
+    expect(await screen.findByDisplayValue('20:15')).toBeInTheDocument()
+    expect(screen.getByLabelText('每日自动签到')).toBeChecked()
+  })
+
+  it('coalesces overlapping check-in refreshes into one trailing request', async () => {
+    vi.useFakeTimers()
+    const initialSettings = {
+      enabled: true,
+      execution_time: '09:30',
+      last_attempt_at: null,
+      last_success_date: null,
+      success: null,
+      message: null,
+    }
+    const currentSettings = {
       ...initialSettings,
       last_attempt_at: '2026-08-24T09:30:00',
       success: false,
-      message: '旧状态',
+      message: '当前请求状态',
     }
     const newerSettings = {
       ...initialSettings,
@@ -603,28 +696,53 @@ describe('App', () => {
       success: true,
       message: '新状态',
     }
-    let resolveOlder!: (value: typeof olderSettings) => void
-    let resolveNewer!: (value: typeof newerSettings) => void
+    const pendingResolvers: Array<(value: MTeamCheckinSettings) => void> = []
     let checkinGetCount = 0
+    let inFlight = 0
+    let maxInFlight = 0
+    let settledResolvers = 0
     vi.spyOn(api, 'get').mockImplementation((path) => {
       if (path !== '/api/settings/mteam/checkin') return Promise.reject(new Error(`${path} unavailable`))
       checkinGetCount += 1
       if (checkinGetCount === 1) return Promise.resolve(initialSettings)
-      if (checkinGetCount === 2) return new Promise((resolve) => { resolveOlder = resolve })
-      return new Promise((resolve) => { resolveNewer = resolve })
+      inFlight += 1
+      maxInFlight = Math.max(maxInFlight, inFlight)
+      return new Promise((resolve) => {
+        pendingResolvers.push((value) => {
+          inFlight -= 1
+          resolve(value)
+        })
+      })
     })
-    const user = userEvent.setup()
     render(<SettingsPage />)
 
-    await screen.findByLabelText('每日自动签到')
-    await user.click(screen.getByRole('button', { name: '刷新签到状态' }))
-    act(() => { window.dispatchEvent(new Event('focus')) })
-    await act(async () => { resolveNewer(newerSettings) })
-    expect(screen.getByText('新状态')).toBeInTheDocument()
+    try {
+      await act(async () => undefined)
+      fireEvent.click(screen.getByRole('button', { name: '刷新签到状态' }))
+      await act(async () => { await vi.advanceTimersByTimeAsync(90_000) })
+      act(() => { window.dispatchEvent(new Event('focus')) })
+      expect(checkinGetCount).toBe(2)
+      expect(maxInFlight).toBe(1)
 
-    await act(async () => { resolveOlder(olderSettings) })
-    expect(screen.getByText('新状态')).toBeInTheDocument()
-    expect(screen.queryByText('旧状态')).not.toBeInTheDocument()
+      settledResolvers += 1
+      await act(async () => { pendingResolvers[0](currentSettings) })
+      expect(checkinGetCount).toBe(3)
+      expect(screen.queryByText('当前请求状态')).not.toBeInTheDocument()
+
+      settledResolvers += 1
+      await act(async () => { pendingResolvers[1](newerSettings) })
+      expect(checkinGetCount).toBe(3)
+      expect(maxInFlight).toBe(1)
+      expect(screen.getByText('新状态')).toBeInTheDocument()
+    } finally {
+      for (let attempts = 0; attempts < 10; attempts += 1) {
+        const resolver = pendingResolvers[settledResolvers]
+        if (!resolver) break
+        settledResolvers += 1
+        await act(async () => { resolver(newerSettings) })
+      }
+      vi.clearAllTimers()
+    }
   })
 
   it('polls check-in settings while visible and clears polling on unmount', async () => {

@@ -15,26 +15,41 @@ export function SettingsPage() {
   const [qbStatus, setQbStatus] = useState<MaskedSettings | null>(null)
   const [downloadDefaults, setDownloadDefaults] = useState<DownloadDefaults | null>(null)
   const checkinRequestGeneration = useRef(0)
+  const checkinRequestInFlight = useRef(false)
+  const checkinRefreshQueued = useRef(false)
   const mounted = useRef(false)
 
   const refreshCheckinSettings = useCallback(async () => {
-    const generation = ++checkinRequestGeneration.current
+    let generation = ++checkinRequestGeneration.current
     if (!mounted.current) return
+    if (checkinRequestInFlight.current) {
+      checkinRefreshQueued.current = true
+      return
+    }
+    checkinRequestInFlight.current = true
     setCheckinRefreshing(true)
     setCheckinLoadError(null)
     try {
-      const result = await loadCheckinSettings()
-      if (mounted.current && generation === checkinRequestGeneration.current) {
-        setMteamCheckin(result)
-      }
-    } catch (reason) {
-      if (mounted.current && generation === checkinRequestGeneration.current) {
-        setCheckinLoadError(
-          reason instanceof ApiError ? `签到设置加载失败：${reason.message}` : '签到设置加载失败',
-        )
+      while (mounted.current) {
+        checkinRefreshQueued.current = false
+        try {
+          const result = await loadCheckinSettings()
+          if (mounted.current && generation === checkinRequestGeneration.current) {
+            setMteamCheckin(result)
+          }
+        } catch (reason) {
+          if (mounted.current && generation === checkinRequestGeneration.current) {
+            setCheckinLoadError(
+              reason instanceof ApiError ? `签到设置加载失败：${reason.message}` : '签到设置加载失败',
+            )
+          }
+        }
+        if (!mounted.current || !checkinRefreshQueued.current) break
+        generation = checkinRequestGeneration.current
       }
     } finally {
-      if (mounted.current && generation === checkinRequestGeneration.current) {
+      checkinRequestInFlight.current = false
+      if (mounted.current) {
         setCheckinLoading(false)
         setCheckinRefreshing(false)
       }
@@ -64,6 +79,7 @@ export function SettingsPage() {
     return () => {
       mounted.current = false
       checkinRequestGeneration.current += 1
+      checkinRefreshQueued.current = false
       window.removeEventListener('focus', refreshOnFocus)
       window.clearInterval(interval)
     }

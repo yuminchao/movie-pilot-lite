@@ -19,6 +19,8 @@ function PosterImage({ src, title, size }: PosterProps) {
       <div
         className={`poster poster-${size} poster-fallback`}
         data-testid="poster-fallback"
+        role={size === 'detail' ? 'img' : undefined}
+        aria-label={size === 'detail' ? `${title} 海报不可用` : undefined}
         aria-hidden={size === 'thumb' ? true : undefined}
       >
         <ImageOff aria-hidden="true" size={size === 'thumb' ? 18 : 30} />

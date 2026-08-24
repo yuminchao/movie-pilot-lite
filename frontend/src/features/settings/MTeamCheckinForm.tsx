@@ -42,6 +42,8 @@ function CheckinSettingsForm({ value, refreshing, loadError, onRefresh }: Omit<M
   const [saveMessage, setSaveMessage] = useState('')
   const [saveFailed, setSaveFailed] = useState(false)
   const mounted = useRef(true)
+  const dirty = useRef(false)
+  const previousValue = useRef({ enabled: value.enabled, executionTime: value.execution_time })
 
   useEffect(() => {
     mounted.current = true
@@ -49,6 +51,16 @@ function CheckinSettingsForm({ value, refreshing, loadError, onRefresh }: Omit<M
       mounted.current = false
     }
   }, [])
+
+  useEffect(() => {
+    const changed = previousValue.current.enabled !== value.enabled
+      || previousValue.current.executionTime !== value.execution_time
+    previousValue.current = { enabled: value.enabled, executionTime: value.execution_time }
+    if (changed && !dirty.current && !busy) {
+      setEnabled(value.enabled)
+      setExecutionTime(value.execution_time)
+    }
+  }, [busy, value.enabled, value.execution_time])
 
   async function save(event: FormEvent) {
     event.preventDefault()
@@ -63,6 +75,7 @@ function CheckinSettingsForm({ value, refreshing, loadError, onRefresh }: Omit<M
       if (!mounted.current) return
       setEnabled(result.enabled)
       setExecutionTime(result.execution_time)
+      dirty.current = false
       setSaveMessage('签到设置已保存')
       void onRefresh()
     } catch (reason) {
@@ -90,7 +103,10 @@ function CheckinSettingsForm({ value, refreshing, loadError, onRefresh }: Omit<M
               id="mteam-checkin-enabled"
               type="checkbox"
               checked={enabled}
-              onChange={(event) => setEnabled(event.target.checked)}
+              onChange={(event) => {
+                dirty.current = true
+                setEnabled(event.target.checked)
+              }}
               disabled={busy}
             />
             <span>每日自动签到</span>
@@ -101,7 +117,10 @@ function CheckinSettingsForm({ value, refreshing, loadError, onRefresh }: Omit<M
               id="mteam-checkin-time"
               type="time"
               value={executionTime}
-              onChange={(event) => setExecutionTime(event.target.value)}
+              onChange={(event) => {
+                dirty.current = true
+                setExecutionTime(event.target.value)
+              }}
               disabled={busy}
               required
             />
