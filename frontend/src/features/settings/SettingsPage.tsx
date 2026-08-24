@@ -10,15 +10,15 @@ export function SettingsPage() {
   const [downloadDefaults, setDownloadDefaults] = useState<DownloadDefaults | null>(null)
 
   useEffect(() => {
-    Promise.all([
-      api.get<MTeamSettings>('/api/settings/mteam'),
-      api.get<MaskedSettings>('/api/settings/qbittorrent'),
-      api.get<DownloadDefaults>('/api/settings/downloads'),
-    ]).then(([mteam, qb, defaults]) => {
-      setMteamStatus(mteam)
-      setQbStatus(qb)
-      setDownloadDefaults(defaults)
-    })
+    void api.get<MTeamSettings>('/api/settings/mteam')
+      .then(setMteamStatus)
+      .catch(() => undefined)
+    void api.get<MaskedSettings>('/api/settings/qbittorrent')
+      .then(setQbStatus)
+      .catch(() => undefined)
+    void api.get<DownloadDefaults>('/api/settings/downloads')
+      .then(setDownloadDefaults)
+      .catch(() => undefined)
   }, [])
 
   return (
@@ -125,10 +125,10 @@ function MTeamForm({ value, onSaved }: { value: MTeamSettings; onSaved: (value: 
     <section className="settings-section">
       <div className="section-title"><span className="section-icon"><Server size={20} /></span><div><h2>M-Team</h2><p>站点搜索和临时下载地址认证</p></div><StatusLine status={value} /></div>
       <form onSubmit={save}>
-        <div className="field-row"><label>站点地址<input type="url" value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} required /></label><label>请求超时（秒）<input type="number" min="1" max="60" value={timeout} onChange={(event) => setTimeoutValue(Number(event.target.value))} /></label></div>
-        <label>Header JSON<textarea rows={5} value={headers} onChange={(event) => setHeaders(event.target.value)} spellCheck={false} /></label>
-        <label>Cookie<textarea rows={3} value={cookie} onChange={(event) => setCookie(event.target.value)} placeholder={value.configured ? value.masked ?? '' : 'tp=...; uid=...'} spellCheck={false} /></label>
-        <label>User-Agent<input value={userAgent} onChange={(event) => setUserAgent(event.target.value)} /></label>
+        <div className="field-row"><label>站点地址<input type="url" value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} disabled={busy} required /></label><label>请求超时（秒）<input type="number" min="1" max="60" value={timeout} onChange={(event) => setTimeoutValue(Number(event.target.value))} disabled={busy} /></label></div>
+        <label>Header JSON<textarea rows={5} value={headers} onChange={(event) => setHeaders(event.target.value)} disabled={busy} spellCheck={false} /></label>
+        <label>Cookie<textarea rows={3} value={cookie} onChange={(event) => setCookie(event.target.value)} disabled={busy} placeholder={value.configured ? value.masked ?? '' : 'tp=...; uid=...'} spellCheck={false} /></label>
+        <label>User-Agent<input value={userAgent} onChange={(event) => setUserAgent(event.target.value)} disabled={busy} /></label>
         {message ? <p className="settings-message" role="status">{message}</p> : null}
         <div className="form-actions"><button className="secondary-button" type="button" onClick={testConnection}><PlugZap size={16} />测试连接</button><button className="primary-button" type="submit" disabled={busy}>{busy ? '保存中...' : '保存配置'}</button></div>
       </form>

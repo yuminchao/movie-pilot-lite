@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -137,5 +137,76 @@ describe('App', () => {
       user_agent: 'custom-agent/2.0',
       timeout: 37,
     })
+  })
+
+  it('shows M-Team settings when other settings requests fail', async () => {
+    const mteamSettings = {
+      configured: true,
+      masked: '••••••••',
+      updated_at: '2026-08-24T12:00:00Z',
+      base_url: 'https://available-mteam.example',
+      headers: { 'x-api-key': '••••••••' },
+      cookie: '••••••••',
+      user_agent: 'custom-agent/2.0',
+      timeout: 37,
+    }
+    vi.spyOn(api, 'get').mockImplementation((path) => {
+      if (path === '/api/settings/mteam') return Promise.resolve(mteamSettings)
+      return Promise.reject(new Error(`${path} unavailable`))
+    })
+
+    render(<SettingsPage />)
+
+    expect(
+      await screen.findByDisplayValue('https://available-mteam.example'),
+    ).toBeInTheDocument()
+  })
+
+  it('disables M-Team fields while saving and syncs the response', async () => {
+    const initialSettings = {
+      configured: true,
+      masked: '••••••••',
+      updated_at: '2026-08-24T12:00:00Z',
+      base_url: 'https://m-team.example',
+      headers: { 'x-api-key': '••••••••' },
+      cookie: '••••••••',
+      user_agent: 'custom-agent/2.0',
+      timeout: 37,
+    }
+    const savedSettings = {
+      ...initialSettings,
+      updated_at: '2026-08-24T12:01:00Z',
+      base_url: 'https://saved-mteam.example',
+    }
+    vi.spyOn(api, 'get').mockImplementation((path) => {
+      if (path === '/api/settings/mteam') return Promise.resolve(initialSettings)
+      if (path === '/api/settings/downloads') {
+        return Promise.resolve({ category: 'downloads', save_path: '/downloads', start: true })
+      }
+      return Promise.resolve({ configured: false, masked: null, updated_at: null })
+    })
+    let resolveSave!: (value: typeof savedSettings) => void
+    vi.spyOn(api, 'put').mockImplementation(
+      () => new Promise((resolve) => { resolveSave = resolve }),
+    )
+    const user = userEvent.setup()
+    render(<SettingsPage />)
+
+    await screen.findByDisplayValue(initialSettings.base_url)
+    await user.click(screen.getAllByRole('button', { name: '保存配置' })[0])
+
+    expect(screen.getByLabelText('站点地址')).toBeDisabled()
+    expect(screen.getByLabelText('Header JSON')).toBeDisabled()
+    expect(screen.getByLabelText('Cookie')).toBeDisabled()
+    expect(screen.getByLabelText('User-Agent')).toBeDisabled()
+    expect(screen.getByLabelText('请求超时（秒）')).toBeDisabled()
+
+    await act(async () => { resolveSave(savedSettings) })
+
+    expect(await screen.findByDisplayValue(savedSettings.base_url)).toBeEnabled()
+    expect(screen.getByLabelText('Header JSON')).toBeEnabled()
+    expect(screen.getByLabelText('Cookie')).toBeEnabled()
+    expect(screen.getByLabelText('User-Agent')).toBeEnabled()
+    expect(screen.getByLabelText('请求超时（秒）')).toBeEnabled()
   })
 })
