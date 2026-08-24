@@ -20,7 +20,7 @@ describe('App', () => {
     expect(await screen.findByRole('heading', { name: '创建管理员密码' })).toBeInTheDocument()
   })
 
-  it('prefills a tv result after async defaults arrive and submits the edited path', async () => {
+  it('preserves result overrides when async defaults arrive', async () => {
     const defaults = {
       category: 'series',
       save_paths: {
@@ -64,19 +64,26 @@ describe('App', () => {
     await user.type(screen.getByRole('searchbox'), '三体')
     await user.click(screen.getByRole('button', { name: '搜索' }))
     await user.click(await screen.findByText('三体'))
-    await act(async () => { resolveDefaults(defaults) })
-    expect(screen.getByLabelText('保存路径')).toHaveValue('/downloads/tv')
     await user.clear(screen.getByLabelText('保存路径'))
     await user.type(screen.getByLabelText('保存路径'), '/downloads/custom-tv')
+    await user.clear(screen.getByLabelText('qB 分类'))
+    await user.type(screen.getByLabelText('qB 分类'), 'custom-series')
+    await user.selectOptions(screen.getByLabelText('启动方式'), 'paused')
+
+    await act(async () => { resolveDefaults(defaults) })
+
+    expect(screen.getByLabelText('保存路径')).toHaveValue('/downloads/custom-tv')
+    expect(screen.getByLabelText('qB 分类')).toHaveValue('custom-series')
+    expect(screen.getByLabelText('启动方式')).toHaveValue('paused')
     await user.click(screen.getByRole('button', { name: '确认推送' }))
 
     expect(get).toHaveBeenCalledWith(expect.stringContaining('/api/search?'))
     expect(get).toHaveBeenCalledWith('/api/settings/downloads')
     expect(post).toHaveBeenCalledWith('/api/downloads', {
       source_token: 'source-7',
-      category: 'series',
+      category: 'custom-series',
       save_path: '/downloads/custom-tv',
-      start: true,
+      start: false,
     })
   })
 
