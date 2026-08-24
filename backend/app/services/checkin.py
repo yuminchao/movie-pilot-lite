@@ -284,6 +284,17 @@ class CheckinService:
         return value
 
     def _local_time(self, now: datetime) -> datetime:
+        """将带时区时间转换为应用本地时间。
+
+        Args:
+            now: 待转换的带时区时间。
+
+        Returns:
+            应用时区内的时间。
+
+        Raises:
+            ValueError: 当前时间不带时区。
+        """
         if now.tzinfo is None or now.utcoffset() is None:
             raise ValueError("当前时间必须包含时区")
         return now.astimezone(self._timezone)
@@ -387,6 +398,15 @@ class CheckinService:
             raise
 
     def _seconds_between(self, now: datetime, target: datetime) -> int:
+        """计算两个时刻之间向上取整的有限等待秒数。
+
+        Args:
+            now: 当前带时区时刻。
+            target: 目标带时区时刻。
+
+        Returns:
+            不小于一秒的等待秒数。
+        """
         elapsed = self._instant(target) - self._instant(now)
         return max(1, math.ceil(elapsed.total_seconds()))
 

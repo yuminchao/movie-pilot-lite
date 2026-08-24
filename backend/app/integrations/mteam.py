@@ -43,6 +43,18 @@ class MTeamClient:
         user_agent: str | None = None,
         timeout: float = 15.0,
     ) -> None:
+        """初始化 M-Team 同步客户端。
+
+        Args:
+            base_url: M-Team 站点地址。
+            headers: 附加请求 Header。
+            cookie: 可选 Cookie 请求头内容。
+            user_agent: 可选 User-Agent 请求头内容。
+            timeout: 单次 HTTP 请求超时秒数。
+
+        Raises:
+            ValueError: 站点地址缺少有效 scheme 或 host。
+        """
         self._site_url = base_url.rstrip("/")
         self._api_url = self._build_api_url(self._site_url)
         self._headers = {str(key): str(value) for key, value in (headers or {}).items()}
@@ -53,7 +65,19 @@ class MTeamClient:
         self._timeout = timeout
 
     def search(self, keyword: str, category: str, page: int) -> list[SearchResult]:
-        """按关键字和垂类搜索 M-Team 资源。"""
+        """按关键字和垂类搜索 M-Team 资源。
+
+        Args:
+            keyword: 搜索关键字。
+            category: 统一资源分类。
+            page: 从一开始的结果页码。
+
+        Returns:
+            归一化后的搜索结果列表。
+
+        Raises:
+            IntegrationError: 网络、响应状态或响应结构无效。
+        """
         categories = self._categories_for(category)
         payload = {
             "keyword": keyword,
@@ -80,7 +104,11 @@ class MTeamClient:
             raise IntegrationError("M-Team 搜索失败") from error
 
     def test_connection(self) -> None:
-        """调用用户资料接口验证站点凭据。"""
+        """调用用户资料接口验证站点凭据。
+
+        Raises:
+            IntegrationError: 网络、响应格式或认证状态无效。
+        """
         try:
             response = httpx.post(
                 f"{self._api_url}/api/member/profile",
@@ -118,7 +146,17 @@ class MTeamClient:
             raise IntegrationError("M-Team 签到失败") from error
 
     def get_download_url(self, source_id: str) -> str:
-        """调用 M-Team 接口生成供 qBittorrent 使用的临时下载地址。"""
+        """调用 M-Team 接口生成临时下载地址。
+
+        Args:
+            source_id: M-Team 资源标识。
+
+        Returns:
+            可供 qBittorrent 使用的 HTTP 或 HTTPS 下载地址。
+
+        Raises:
+            IntegrationError: 网络、响应格式或下载地址无效。
+        """
         try:
             response = httpx.post(
                 f"{self._api_url}/api/torrent/genDlToken",
@@ -137,6 +175,18 @@ class MTeamClient:
             raise IntegrationError("M-Team 下载地址生成失败") from error
 
     def _parse_result(self, item: dict) -> SearchResult:
+        """将 M-Team 单条响应映射为统一搜索结果。
+
+        Args:
+            item: M-Team 返回的单条资源对象。
+
+        Returns:
+            归一化后的搜索结果。
+
+        Raises:
+            TypeError: 数值字段无法转换为目标类型。
+            ValueError: 数值字段内容无效。
+        """
         status = item.get("status") or {}
         raw_category = str(item.get("category") or "")
         category = self._category_name(raw_category)
@@ -186,6 +236,17 @@ class MTeamClient:
 
     @staticmethod
     def _build_api_url(site_url: str) -> str:
+        """根据站点地址构造对应 API 根地址。
+
+        Args:
+            site_url: 已去除末尾斜杠的站点地址。
+
+        Returns:
+            规范化后的 API 根地址。
+
+        Raises:
+            ValueError: 站点地址缺少有效 scheme 或 host。
+        """
         parsed = urlsplit(site_url)
         if not parsed.scheme or not parsed.hostname:
             raise ValueError("M-Team 站点地址必须包含 scheme 和 host")

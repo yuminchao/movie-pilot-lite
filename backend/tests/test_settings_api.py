@@ -253,6 +253,42 @@ def test_qbittorrent_settings_require_credentials(client) -> None:
     assert response.status_code == 422
 
 
+def test_qbittorrent_validation_error_does_not_echo_oversized_password(client) -> None:
+    _login(client)
+    sensitive_password = "unique-qb-password-secret-" + "x" * 500
+
+    response = client.put(
+        "/api/settings/qbittorrent",
+        json={
+            "base_url": "http://qb:8080",
+            "username": "admin",
+            "password": sensitive_password,
+            "api_key": None,
+        },
+    )
+
+    assert response.status_code == 422
+    assert "unique-qb-password-secret" not in response.text
+
+
+def test_qbittorrent_validation_error_does_not_echo_invalid_api_key(client) -> None:
+    _login(client)
+    sensitive_api_key = 246_813_579
+
+    response = client.put(
+        "/api/settings/qbittorrent",
+        json={
+            "base_url": "http://qb:8080",
+            "username": None,
+            "password": None,
+            "api_key": sensitive_api_key,
+        },
+    )
+
+    assert response.status_code == 422
+    assert str(sensitive_api_key) not in response.text
+
+
 def test_connection_test_requires_saved_configuration(client) -> None:
     _login(client)
 
@@ -308,6 +344,7 @@ def test_download_defaults_reject_relative_path(client, path_key: str) -> None:
     )
 
     assert response.status_code == 422
+    assert "input" in response.json()["detail"][0]
 
 
 def test_legacy_download_defaults_fill_all_save_paths(client) -> None:
@@ -405,7 +442,7 @@ def test_checkin_settings_can_be_saved_and_loaded(client) -> None:
     assert loaded.json() == expected
 
 
-def test_checkin_settings_reject_invalid_time_without_echoing_value(client) -> None:
+def test_checkin_settings_keep_default_validation_input(client) -> None:
     _login(client)
     invalid_time = "sensitive-invalid-time"
 
@@ -415,7 +452,7 @@ def test_checkin_settings_reject_invalid_time_without_echoing_value(client) -> N
     )
 
     assert response.status_code == 422
-    assert invalid_time not in response.text
+    assert response.json()["detail"][0]["input"] == invalid_time
 
 
 def test_updating_checkin_settings_preserves_runtime_status(client) -> None:

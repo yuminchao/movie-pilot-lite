@@ -6,6 +6,7 @@ from threading import RLock
 from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, HTTPException, Request, status
+from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -32,7 +33,18 @@ def create_app(
     database_url: str | None = None,
     frontend_dir: Path | None = None,
 ) -> FastAPI:
-    """创建带独立数据库和认证服务的 FastAPI 应用。"""
+    """创建并装配数据库、认证、签到调度与 API 路由。
+
+    Args:
+        database_url: 数据库连接地址；未提供时读取环境变量或使用默认值。
+        frontend_dir: 前端静态构建目录；未提供时使用仓库默认目录。
+
+    Returns:
+        已配置依赖、异常处理器和生命周期的 FastAPI 应用。
+
+    Raises:
+        sqlalchemy.exc.SQLAlchemyError: 数据库初始化或建表失败。
+    """
     url = database_url or os.getenv(
         "DATABASE_URL",
         "sqlite:///./data/movie-pilot-lite.db",
@@ -45,7 +57,14 @@ def create_app(
     token_codec = SourceTokenCodec(secrets.token_bytes(32))
 
     def repository() -> ConfigRepository:
-        """使用当前登录解锁的密钥构造配置仓库。"""
+        """使用当前登录解锁的密钥构造配置仓库。
+
+        Returns:
+            可读写加密配置的仓库。
+
+        Raises:
+            RuntimeError: 敏感配置保险库尚未解锁。
+        """
         return ConfigRepository(database.session_factory, vault.cipher)
 
     checkin_instance: CheckinService | None = None
@@ -84,7 +103,17 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
-        """在应用生命周期内启动并完整停止签到调度器。"""
+        """在应用生命周期内启动并完整停止签到调度器。
+
+        Args:
+            _: 当前 FastAPI 应用。
+
+        Yields:
+            应用处理请求的生命周期控制权。
+
+        Raises:
+            RuntimeError: 启动时没有正在运行的事件循环。
+        """
         checkin_scheduler.start()
         try:
             yield
@@ -100,7 +129,16 @@ def create_app(
     application.dependency_overrides[auth.get_auth_service] = lambda: service
 
     def mteam_client() -> MTeamClient:
-        """从加密配置构造 M-Team 客户端。"""
+        """从加密配置构造 M-Team 客户端。
+
+        Returns:
+            使用已保存连接配置的 M-Team 客户端。
+
+        Raises:
+            HTTPException: M-Team 连接尚未配置。
+            RuntimeError: 敏感配置保险库尚未解锁。
+            ValueError: 已保存配置无效。
+        """
         value = repository().get_secret(ConfigKey.MTEAM_CONNECTION)
         if value is None:
             raise HTTPException(
@@ -110,14 +148,32 @@ def create_app(
         return MTeamClient(**value)
 
     def search_service() -> SearchService:
-        """组装请求所需的搜索服务。"""
+        """组装请求所需的搜索服务。
+
+        Returns:
+            使用当前 M-Team 配置和临时令牌编码器的搜索服务。
+
+        Raises:
+            HTTPException: M-Team 连接尚未配置。
+            RuntimeError: 敏感配置保险库尚未解锁。
+            ValueError: 已保存配置无效。
+        """
         return SearchService(
             mteam_client(),
             lambda result: token_codec.encode(result.source_id, result.title),
         )
 
     def download_service() -> DownloadService:
-        """从加密配置组装下载服务。"""
+        """从加密配置组装下载服务。
+
+        Returns:
+            使用当前站点和下载器配置的下载服务。
+
+        Raises:
+            HTTPException: M-Team 或 qBittorrent 连接尚未配置。
+            RuntimeError: 敏感配置保险库尚未解锁。
+            ValueError: 已保存配置无效。
+        """
         value = repository().get_secret(ConfigKey.QBITTORRENT_CONNECTION)
         if value is None:
             raise HTTPException(
@@ -135,17 +191,38 @@ def create_app(
         _: Request,
         error: IntegrationError | QbittorrentError,
     ) -> JSONResponse:
-        """将脱敏第三方错误转换为稳定的 502 响应。"""
+        """将脱敏第三方错误转换为稳定的 502 响应。
+
+        Args:
+            _: 当前 HTTP 请求。
+            error: 已脱敏的第三方集成异常。
+
+        Returns:
+            包含公开错误消息的 502 JSON 响应。
+        """
         return JSONResponse(
             status_code=status.HTTP_502_BAD_GATEWAY,
             content={"detail": str(error)},
         )
 
     async def request_validation_error_handler(
-        _: Request,
+        request: Request,
         error: RequestValidationError,
     ) -> JSONResponse:
-        """返回不包含请求原值和校验上下文的 422 响应。"""
+        """按请求路径返回默认或凭据脱敏的 422 响应。
+
+        Args:
+            request: 发生请求校验错误的 HTTP 请求。
+            error: FastAPI 请求校验异常。
+
+        Returns:
+            凭据端点返回移除原始输入的错误；其他端点返回 FastAPI 默认错误。
+        """
+        if request.url.path not in {
+            "/api/settings/mteam",
+            "/api/settings/qbittorrent",
+        }:
+            return await request_validation_exception_handler(request, error)
         detail = [
             {
                 "type": item["type"],
@@ -168,7 +245,11 @@ def create_app(
 
     @application.get("/api/health")
     def health() -> dict[str, str]:
-        """返回不依赖外部服务的进程健康状态。"""
+        """返回不依赖外部服务的进程健康状态。
+
+        Returns:
+            固定的健康状态对象。
+        """
         return {"status": "ok"}
 
     application.include_router(auth.router)
@@ -185,7 +266,17 @@ def create_app(
 
         @application.get("/{path:path}", include_in_schema=False)
         def frontend_fallback(path: str) -> FileResponse:
-            """为非 API 前端路由返回 Vite 入口文件。"""
+            """为非 API 前端路由返回静态文件或 Vite 入口文件。
+
+            Args:
+                path: 请求的应用内相对路径。
+
+            Returns:
+                匹配的静态文件或单页应用入口文件。
+
+            Raises:
+                HTTPException: 路径属于不存在的 API。
+            """
             if path == "api" or path.startswith("api/"):
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
             requested = static_root / path

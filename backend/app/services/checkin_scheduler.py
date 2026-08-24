@@ -67,7 +67,11 @@ class CheckinScheduler:
 
     @property
     def is_running(self) -> bool:
-        """判断调度任务是否正在运行。"""
+        """判断调度任务是否正在运行。
+
+        Returns:
+            调度任务存在且尚未结束时返回 True。
+        """
         with self._state_lock:
             return self._runner is not None and not self._runner.done()
 

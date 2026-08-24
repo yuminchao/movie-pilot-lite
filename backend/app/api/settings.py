@@ -78,7 +78,17 @@ class DownloadDefaultsRequest(BaseModel):
 
 
 def get_settings_service(request: Request) -> SettingsService:
-    """从应用状态组装当前设置服务。"""
+    """从应用状态组装当前设置服务。
+
+    Args:
+        request: 当前 HTTP 请求。
+
+    Returns:
+        使用应用数据库和密钥保险库的设置服务。
+
+    Raises:
+        HTTPException: 数据库或密钥保险库尚未初始化。
+    """
     try:
         return SettingsService(request.app.state.database, request.app.state.secret_vault)
     except AttributeError as error:
@@ -93,7 +103,15 @@ def get_mteam(
     _: str = Depends(require_session),
     service: SettingsService = Depends(get_settings_service),
 ) -> dict[str, Any]:
-    """返回 M-Team 配置掩码状态。"""
+    """返回 M-Team 公开配置和敏感字段掩码。
+
+    Args:
+        _: 已认证的管理员会话标识。
+        service: 当前设置服务。
+
+    Returns:
+        M-Team 配置状态与安全回显字段。
+    """
     return service.get_mteam()
 
 
@@ -104,7 +122,20 @@ def save_mteam(
     _: str = Depends(require_session),
     service: SettingsService = Depends(get_settings_service),
 ) -> dict[str, Any]:
-    """加密保存 M-Team 连接配置。"""
+    """加密保存 M-Team 连接配置并唤醒签到调度器。
+
+    Args:
+        payload: 已校验的完整 M-Team 连接表单。
+        request: 当前 HTTP 请求。
+        _: 已认证的管理员会话标识。
+        service: 当前设置服务。
+
+    Returns:
+        保存后的安全配置视图。
+
+    Raises:
+        HTTPException: 掩码字段没有可保留的旧值。
+    """
     try:
         result = service.save_mteam(
             {
@@ -152,7 +183,19 @@ def test_mteam(
     _: str = Depends(require_session),
     service: SettingsService = Depends(get_settings_service),
 ) -> dict[str, Any]:
-    """验证已保存的 M-Team 连接。"""
+    """验证已保存的 M-Team 连接。
+
+    Args:
+        _: 已认证的管理员会话标识。
+        service: 当前设置服务。
+
+    Returns:
+        连接成功状态和公开消息。
+
+    Raises:
+        HTTPException: M-Team 连接尚未配置。
+        app.integrations.mteam.IntegrationError: 第三方连接验证失败。
+    """
     try:
         return service.test_mteam()
     except ValueError as error:
@@ -167,7 +210,15 @@ def get_mteam_checkin(
     _: str = Depends(require_session),
     service: CheckinService = Depends(get_checkin_service),
 ) -> dict[str, Any]:
-    """返回 M-Team 每日签到设置和运行状态。"""
+    """返回 M-Team 每日签到设置和运行状态。
+
+    Args:
+        _: 已认证的管理员会话标识。
+        service: 当前签到服务。
+
+    Returns:
+        公开签到设置和最近运行状态。
+    """
     return service.read_settings()
 
 
@@ -178,7 +229,17 @@ def save_mteam_checkin(
     _: str = Depends(require_session),
     service: CheckinService = Depends(get_checkin_service),
 ) -> dict[str, Any]:
-    """保存 M-Team 每日签到开关和执行时间。"""
+    """保存 M-Team 每日签到设置并在成功后唤醒调度器。
+
+    Args:
+        payload: 已校验的签到开关和每日执行时间。
+        request: 当前 HTTP 请求。
+        _: 已认证的管理员会话标识。
+        service: 当前签到服务。
+
+    Returns:
+        保存后的公开签到设置和运行状态。
+    """
     result = service.save_settings(payload.enabled, payload.execution_time)
     request.app.state.checkin_scheduler.wake()
     return result
@@ -189,7 +250,15 @@ def get_qbittorrent(
     _: str = Depends(require_session),
     service: SettingsService = Depends(get_settings_service),
 ) -> dict[str, Any]:
-    """返回 qBittorrent 配置掩码状态。"""
+    """返回 qBittorrent 配置掩码状态。
+
+    Args:
+        _: 已认证的管理员会话标识。
+        service: 当前设置服务。
+
+    Returns:
+        不包含凭据明文的配置状态。
+    """
     return service.get_qbittorrent()
 
 
@@ -199,7 +268,16 @@ def save_qbittorrent(
     _: str = Depends(require_session),
     service: SettingsService = Depends(get_settings_service),
 ) -> dict[str, Any]:
-    """加密保存 qBittorrent 连接配置。"""
+    """加密保存 qBittorrent 连接配置。
+
+    Args:
+        payload: 已校验的 qBittorrent 连接配置。
+        _: 已认证的管理员会话标识。
+        service: 当前设置服务。
+
+    Returns:
+        不包含凭据明文的配置状态。
+    """
     return service.save_qbittorrent(
         {
             **payload.model_dump(exclude_none=True),
@@ -213,7 +291,19 @@ def test_qbittorrent(
     _: str = Depends(require_session),
     service: SettingsService = Depends(get_settings_service),
 ) -> dict[str, Any]:
-    """验证已保存的 qBittorrent 连接。"""
+    """验证已保存的 qBittorrent 连接。
+
+    Args:
+        _: 已认证的管理员会话标识。
+        service: 当前设置服务。
+
+    Returns:
+        连接成功状态和公开消息。
+
+    Raises:
+        HTTPException: qBittorrent 连接尚未配置。
+        app.integrations.qbittorrent.QbittorrentError: 第三方连接验证失败。
+    """
     try:
         return service.test_qbittorrent()
     except ValueError as error:
@@ -228,7 +318,15 @@ def get_download_defaults(
     _: str = Depends(require_session),
     service: SettingsService = Depends(get_settings_service),
 ) -> dict[str, Any]:
-    """返回搜索结果使用的 qBittorrent 默认参数。"""
+    """返回搜索结果使用的 qBittorrent 默认参数。
+
+    Args:
+        _: 已认证的管理员会话标识。
+        service: 当前设置服务。
+
+    Returns:
+        按资源类型归一化的下载默认值。
+    """
     return service.get_download_defaults()
 
 
@@ -238,5 +336,14 @@ def save_download_defaults(
     _: str = Depends(require_session),
     service: SettingsService = Depends(get_settings_service),
 ) -> dict[str, Any]:
-    """保存搜索结果使用的 qBittorrent 默认参数。"""
+    """保存搜索结果使用的 qBittorrent 默认参数。
+
+    Args:
+        payload: 已校验的下载默认值。
+        _: 已认证的管理员会话标识。
+        service: 当前设置服务。
+
+    Returns:
+        保存后的下载默认值。
+    """
     return service.save_download_defaults(payload.model_dump())

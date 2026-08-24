@@ -43,12 +43,23 @@ class SecretVault:
 
     @property
     def is_unlocked(self) -> bool:
-        """判断当前进程是否已经通过管理员登录解锁。"""
+        """判断当前进程是否已经通过管理员登录解锁。
+
+        Returns:
+            已持有可用加密器时返回 True。
+        """
         return self._cipher is not None
 
     @property
     def cipher(self) -> SecretCipher:
-        """返回当前加密器；未登录时拒绝访问。"""
+        """返回当前解锁的敏感配置加密器。
+
+        Returns:
+            当前进程持有的加密器。
+
+        Raises:
+            RuntimeError: 敏感配置保险库尚未解锁。
+        """
         if self._cipher is None:
             raise RuntimeError("敏感配置尚未解锁")
         return self._cipher
