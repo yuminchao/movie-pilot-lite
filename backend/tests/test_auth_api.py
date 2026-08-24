@@ -30,6 +30,31 @@ def test_setup_is_only_available_without_admin(client) -> None:
     assert client.post("/api/auth/setup", json=payload).status_code == 409
 
 
+def test_setup_validation_error_does_not_echo_oversized_password(client) -> None:
+    sensitive_password = "unique-setup-password-secret-" + "x" * 256
+
+    response = client.post(
+        "/api/auth/setup",
+        json={"password": sensitive_password},
+    )
+
+    assert response.status_code == 422
+    assert "unique-setup-password-secret" not in response.text
+
+
+def test_login_validation_error_does_not_echo_oversized_password(client) -> None:
+    client.post("/api/auth/setup", json={"password": "correct horse battery"})
+    sensitive_password = "unique-login-password-secret-" + "x" * 256
+
+    response = client.post(
+        "/api/auth/login",
+        json={"password": sensitive_password},
+    )
+
+    assert response.status_code == 422
+    assert "unique-login-password-secret" not in response.text
+
+
 def test_protected_endpoint_requires_session(client) -> None:
     response = client.get("/api/settings/mteam")
 

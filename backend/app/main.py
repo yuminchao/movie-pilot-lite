@@ -219,6 +219,8 @@ def create_app(
             凭据端点返回移除原始输入的错误；其他端点返回 FastAPI 默认错误。
         """
         if request.url.path not in {
+            "/api/auth/login",
+            "/api/auth/setup",
             "/api/settings/mteam",
             "/api/settings/qbittorrent",
         }:
