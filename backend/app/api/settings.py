@@ -1,10 +1,16 @@
+import os
+from datetime import time
 from pathlib import PurePosixPath, PureWindowsPath
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import AnyHttpUrl, BaseModel, Field, model_validator
 
 from app.api.auth import require_session
+from app.config.repository import ConfigRepository
+from app.integrations.mteam import MTeamClient
+from app.services.checkin import CheckinService
 from app.services.settings import SettingsService
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
@@ -18,6 +24,13 @@ class MTeamSettingsRequest(BaseModel):
     cookie: str | None = Field(default=None, max_length=16_384)
     user_agent: str | None = Field(default=None, max_length=500)
     timeout: float = Field(default=15, ge=1, le=60)
+
+
+class MTeamCheckinSettingsRequest(BaseModel):
+    """M-Team 每日签到设置请求。"""
+
+    enabled: bool
+    execution_time: time
 
 
 class QbittorrentSettingsRequest(BaseModel):
@@ -105,6 +118,32 @@ def save_mteam(
         ) from error
 
 
+def get_checkin_service(request: Request) -> CheckinService:
+    """从应用状态组装签到模块。
+
+    Args:
+        request: 当前 HTTP 请求。
+
+    Returns:
+        使用加密配置仓库和应用时区的签到模块。
+
+    Raises:
+        HTTPException: 数据库或密钥保险库尚未初始化。
+    """
+    try:
+        repository = ConfigRepository(
+            request.app.state.database.session_factory,
+            request.app.state.secret_vault.cipher,
+        )
+        timezone = ZoneInfo(os.getenv("TZ", "Asia/Shanghai"))
+    except AttributeError as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="签到服务尚未初始化",
+        ) from error
+    return CheckinService(repository, lambda value: MTeamClient(**value), timezone)
+
+
 @router.post("/mteam/test")
 def test_mteam(
     _: str = Depends(require_session),
@@ -118,6 +157,25 @@ def test_mteam(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=str(error),
         ) from error
+
+
+@router.get("/mteam/checkin")
+def get_mteam_checkin(
+    _: str = Depends(require_session),
+    service: CheckinService = Depends(get_checkin_service),
+) -> dict[str, Any]:
+    """返回 M-Team 每日签到设置和运行状态。"""
+    return service.read_settings()
+
+
+@router.put("/mteam/checkin")
+def save_mteam_checkin(
+    payload: MTeamCheckinSettingsRequest,
+    _: str = Depends(require_session),
+    service: CheckinService = Depends(get_checkin_service),
+) -> dict[str, Any]:
+    """保存 M-Team 每日签到开关和执行时间。"""
+    return service.save_settings(payload.enabled, payload.execution_time)
 
 
 @router.get("/qbittorrent")

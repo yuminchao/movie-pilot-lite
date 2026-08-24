@@ -152,3 +152,46 @@ def test_mteam_site_subdomain_is_normalized_to_api_host(httpx_mock) -> None:
     )
 
     assert client.search("Movie", "all", 1) == []
+
+
+@pytest.mark.parametrize("code", ["0", 0, "200", 200])
+def test_check_in_accepts_success_codes_and_sends_api_key(
+    mteam_client: MTeamClient,
+    httpx_mock,
+    code: str | int,
+) -> None:
+    httpx_mock.add_response(
+        method="POST",
+        url="https://api.m-team.test/api/system/hello",
+        json={"code": code},
+    )
+
+    assert mteam_client.check_in() is None
+    assert httpx_mock.get_request().headers["x-api-key"] == "secret"
+
+
+@pytest.mark.parametrize(
+    ("response_kwargs"),
+    [
+        {"status_code": 503},
+        {"content": b"not-json"},
+        {"json": []},
+        {"json": {}},
+        {"json": {"code": "1", "message": "sensitive upstream detail"}},
+    ],
+)
+def test_check_in_failures_use_fixed_sanitized_error(
+    mteam_client: MTeamClient,
+    httpx_mock,
+    response_kwargs: dict,
+) -> None:
+    httpx_mock.add_response(
+        method="POST",
+        url="https://api.m-team.test/api/system/hello",
+        **response_kwargs,
+    )
+
+    with pytest.raises(IntegrationError) as raised:
+        mteam_client.check_in()
+
+    assert str(raised.value) == "M-Team 签到失败"

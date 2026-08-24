@@ -351,3 +351,100 @@ def test_unconfigured_download_defaults_return_safe_defaults(client) -> None:
         },
         "start": True,
     }
+
+
+def test_checkin_settings_require_session(client) -> None:
+    response = client.get("/api/settings/mteam/checkin")
+
+    assert response.status_code == 401
+
+
+def test_unconfigured_checkin_settings_return_defaults(client) -> None:
+    _login(client)
+
+    response = client.get("/api/settings/mteam/checkin")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "enabled": False,
+        "execution_time": "09:00",
+        "last_attempt_at": None,
+        "last_success_date": None,
+        "success": None,
+        "message": None,
+    }
+
+
+def test_checkin_settings_can_be_saved_and_loaded(client) -> None:
+    _login(client)
+
+    saved = client.put(
+        "/api/settings/mteam/checkin",
+        json={"enabled": True, "execution_time": "07:05"},
+    )
+    loaded = client.get("/api/settings/mteam/checkin")
+
+    expected = {
+        "enabled": True,
+        "execution_time": "07:05",
+        "last_attempt_at": None,
+        "last_success_date": None,
+        "success": None,
+        "message": None,
+    }
+    assert saved.status_code == 200
+    assert saved.json() == expected
+    assert loaded.json() == expected
+
+
+def test_checkin_settings_reject_invalid_time_without_echoing_value(client) -> None:
+    _login(client)
+    invalid_time = "sensitive-invalid-time"
+
+    response = client.put(
+        "/api/settings/mteam/checkin",
+        json={"enabled": True, "execution_time": invalid_time},
+    )
+
+    assert response.status_code == 422
+    assert invalid_time not in response.text
+
+
+def test_updating_checkin_settings_preserves_runtime_status(client) -> None:
+    _login(client)
+    repository = ConfigRepository(
+        client.app.state.database.session_factory,
+        client.app.state.secret_vault.cipher,
+    )
+    repository.set_secret(
+        ConfigKey.MTEAM_CHECKIN,
+        {
+            "enabled": True,
+            "execution_time": "09:00",
+            "last_attempt_at": "2026-08-24T09:00:00+08:00",
+            "last_success_date": "2026-08-24",
+            "attempt_date": "2026-08-24",
+            "attempts_on_date": 1,
+            "success": True,
+            "message": "签到成功",
+        },
+    )
+
+    response = client.put(
+        "/api/settings/mteam/checkin",
+        json={"enabled": False, "execution_time": "10:30"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "enabled": False,
+        "execution_time": "10:30",
+        "last_attempt_at": "2026-08-24T09:00:00+08:00",
+        "last_success_date": "2026-08-24",
+        "success": True,
+        "message": "签到成功",
+    }
+    persisted = repository.get_secret(ConfigKey.MTEAM_CHECKIN)
+    assert persisted is not None
+    assert persisted["attempt_date"] == "2026-08-24"
+    assert persisted["attempts_on_date"] == 1

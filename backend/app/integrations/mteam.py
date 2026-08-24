@@ -95,6 +95,28 @@ class MTeamClient:
         except (httpx.HTTPError, ValueError, TypeError) as error:
             raise IntegrationError("M-Team 连接失败") from error
 
+    def check_in(self) -> None:
+        """调用 M-Team 问候接口完成签到。
+
+        Raises:
+            IntegrationError: 网络、响应格式或业务状态表示签到失败。
+        """
+        try:
+            response = httpx.post(
+                f"{self._api_url}/api/system/hello",
+                headers=self._headers,
+                timeout=self._timeout,
+            )
+            response.raise_for_status()
+            payload = response.json()
+            if not isinstance(payload, dict) or str(payload.get("code")) not in {
+                "0",
+                "200",
+            }:
+                raise ValueError("签到响应无效")
+        except (httpx.HTTPError, ValueError, TypeError) as error:
+            raise IntegrationError("M-Team 签到失败") from error
+
     def get_download_url(self, source_id: str) -> str:
         """调用 M-Team 接口生成供 qBittorrent 使用的临时下载地址。"""
         try:

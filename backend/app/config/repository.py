@@ -14,6 +14,7 @@ class ConfigKey(StrEnum):
     """允许持久化的配置键。"""
 
     MTEAM_CONNECTION = "mteam.connection"
+    MTEAM_CHECKIN = "mteam.checkin"
     QBITTORRENT_CONNECTION = "qbittorrent.connection"
     DOWNLOAD_DEFAULTS = "download.defaults"
 
