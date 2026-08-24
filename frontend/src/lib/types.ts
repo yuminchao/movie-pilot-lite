@@ -19,6 +19,7 @@ export interface SearchItem {
   upload_factor: number
   created_at: string | null
   page_url: string
+  poster_url: string | null
   labels: string[]
 }
 

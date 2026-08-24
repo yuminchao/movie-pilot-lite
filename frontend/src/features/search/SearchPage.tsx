@@ -3,6 +3,7 @@ import { ChevronDown, ChevronLeft, ChevronRight, Search, Send } from 'lucide-rea
 
 import { api, ApiError } from '../../lib/api'
 import type { Category, DownloadDefaults, SearchItem, SearchPageData, SearchSort } from '../../lib/types'
+import { Poster } from './Poster'
 
 const categories: Array<{ value: Category; label: string }> = [
   { value: 'all', label: '全部' },
@@ -177,8 +178,9 @@ function ResultRow({ item, expanded, onToggle, onSuccess, defaults }: { item: Se
     <div className={`result-group ${expanded ? 'expanded' : ''}`}>
       <div className="result-row" role="row">
         <button className="result-title" type="button" onClick={onToggle} aria-expanded={expanded}>
-          <span><strong>{item.title}</strong><small>{item.category === 'tv' ? '电视剧' : item.category === 'music' ? '音乐' : '电影'} · {item.description || item.labels.join(' · ')}</small></span>
-          <ChevronDown size={17} />
+          <Poster src={item.poster_url} title={item.title} size="thumb" />
+          <span className="result-title-copy"><strong>{item.title}</strong><small>{item.category === 'tv' ? '电视剧' : item.category === 'music' ? '音乐' : '电影'} · {item.description || item.labels.join(' · ')}</small></span>
+          <ChevronDown className="result-chevron" size={17} />
         </button>
         <span data-label="大小">{formatBytes(item.size)}</span>
         <span data-label="做种">{item.seeders}</span>
@@ -188,6 +190,7 @@ function ResultRow({ item, expanded, onToggle, onSuccess, defaults }: { item: Se
       </div>
       {expanded ? (
         <div className="download-options">
+          <Poster src={item.poster_url} title={item.title} size="detail" />
           <label>qB 分类<input value={qbCategory} onChange={(event) => { categoryEdited.current = true; setQbCategory(event.target.value) }} /></label>
           <label>保存路径<input value={savePath} onChange={(event) => { savePathEdited.current = true; setSavePath(event.target.value) }} /></label>
           <label>启动方式<select value={start ? 'start' : 'paused'} onChange={(event) => { startEdited.current = true; setStart(event.target.value === 'start') }}><option value="start">立即开始</option><option value="paused">暂停添加</option></select></label>

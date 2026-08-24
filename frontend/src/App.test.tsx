@@ -1,4 +1,4 @@
-import { act, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -85,6 +85,128 @@ describe('App', () => {
       save_path: '/downloads/custom-tv',
       start: false,
     })
+  })
+
+  it('shows poster thumbnails and detail posters with safe image attributes', async () => {
+    vi.spyOn(api, 'get').mockImplementation((path) =>
+      path === '/api/settings/downloads'
+        ? Promise.resolve({
+            category: 'downloads',
+            save_paths: { movie: '/downloads', tv: '/downloads', music: '/downloads', other: '/downloads' },
+            start: true,
+          })
+        : Promise.resolve({
+            items: [{
+              source_token: 'source-poster',
+              title: '海报电影',
+              description: '2160p',
+              category: 'movie',
+              size: 1024,
+              seeders: 1,
+              leechers: 0,
+              downloads: 0,
+              download_factor: 1,
+              upload_factor: 1,
+              created_at: null,
+              page_url: 'https://m-team.test/detail/poster',
+              poster_url: 'https://images.m-team.test/poster.jpg',
+              labels: [],
+            }],
+            page: 1,
+            has_more: false,
+          }),
+    )
+    const user = userEvent.setup()
+    render(<SearchPage />)
+
+    await user.type(screen.getByRole('searchbox'), '海报电影')
+    await user.click(screen.getByRole('button', { name: '搜索' }))
+    const thumbnail = await screen.findByAltText('海报电影 海报')
+    expect(thumbnail).toHaveAttribute('src', 'https://images.m-team.test/poster.jpg')
+    expect(thumbnail).toHaveAttribute('loading', 'lazy')
+    expect(thumbnail).toHaveAttribute('decoding', 'async')
+    expect(thumbnail).toHaveAttribute('referrerpolicy', 'no-referrer')
+
+    await user.click(screen.getByText('海报电影'))
+
+    expect(screen.getAllByAltText('海报电影 海报')).toHaveLength(2)
+  })
+
+  it('uses a fixed fallback for missing and failed posters', async () => {
+    vi.spyOn(api, 'get').mockImplementation((path) =>
+      path === '/api/settings/downloads'
+        ? Promise.resolve({
+            category: 'downloads',
+            save_paths: { movie: '/downloads', tv: '/downloads', music: '/downloads', other: '/downloads' },
+            start: true,
+          })
+        : Promise.resolve({
+            items: [
+              {
+                source_token: 'source-missing', title: '缺失海报', description: '', category: 'movie', size: 1,
+                seeders: 1, leechers: 0, downloads: 0, download_factor: 1, upload_factor: 1,
+                created_at: null, page_url: 'https://m-team.test/detail/missing', poster_url: null, labels: [],
+              },
+              {
+                source_token: 'source-failed', title: '失败海报', description: '', category: 'movie', size: 1,
+                seeders: 1, leechers: 0, downloads: 0, download_factor: 1, upload_factor: 1,
+                created_at: null, page_url: 'https://m-team.test/detail/failed',
+                poster_url: 'https://images.m-team.test/failed.jpg', labels: [],
+              },
+            ],
+            page: 1,
+            has_more: false,
+          }),
+    )
+    const user = userEvent.setup()
+    render(<SearchPage />)
+
+    await user.type(screen.getByRole('searchbox'), '海报')
+    await user.click(screen.getByRole('button', { name: '搜索' }))
+    expect(await screen.findByTestId('poster-fallback')).toBeInTheDocument()
+
+    fireEvent.error(screen.getByAltText('失败海报 海报'))
+
+    expect(screen.getAllByTestId('poster-fallback')).toHaveLength(2)
+    expect(screen.queryByAltText('失败海报 海报')).not.toBeInTheDocument()
+  })
+
+  it('recovers a failed poster when its source changes', async () => {
+    let searchCount = 0
+    vi.spyOn(api, 'get').mockImplementation((path) => {
+      if (path === '/api/settings/downloads') {
+        return Promise.resolve({
+          category: 'downloads',
+          save_paths: { movie: '/downloads', tv: '/downloads', music: '/downloads', other: '/downloads' },
+          start: true,
+        })
+      }
+      searchCount += 1
+      return Promise.resolve({
+        items: [{
+          source_token: 'source-changing', title: '换源海报', description: '', category: 'movie', size: 1,
+          seeders: 1, leechers: 0, downloads: 0, download_factor: 1, upload_factor: 1,
+          created_at: null, page_url: 'https://m-team.test/detail/changing',
+          poster_url: `https://images.m-team.test/poster-${searchCount}.jpg`, labels: [],
+        }],
+        page: 1,
+        has_more: false,
+      })
+    })
+    const user = userEvent.setup()
+    render(<SearchPage />)
+
+    await user.type(screen.getByRole('searchbox'), '换源海报')
+    await user.click(screen.getByRole('button', { name: '搜索' }))
+    fireEvent.error(await screen.findByAltText('换源海报 海报'))
+    expect(screen.getByTestId('poster-fallback')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: '搜索' }))
+
+    expect(await screen.findByAltText('换源海报 海报')).toHaveAttribute(
+      'src',
+      'https://images.m-team.test/poster-2.jpg',
+    )
   })
 
   it('uses the other path for a result with category all', async () => {

@@ -20,6 +20,7 @@ class SearchItem:
     upload_factor: float
     created_at: str | None
     page_url: str
+    poster_url: str | None
     labels: tuple[str, ...]
 
 
@@ -53,6 +54,7 @@ class SearchPage:
                 upload_factor=result.upload_factor,
                 created_at=result.created_at,
                 page_url=result.page_url,
+                poster_url=result.poster_url,
                 labels=result.labels,
             )
             for result in results

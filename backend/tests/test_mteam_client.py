@@ -29,6 +29,12 @@ def test_search_maps_movie_result(mteam_client: MTeamClient, httpx_mock) -> None
                         "smallDescr": "description",
                         "category": "401",
                         "size": 1000,
+                        "imageList": [
+                            "http://images.m-team.test/insecure.jpg",
+                            7,
+                            "https://images.m-team.test/poster.jpg",
+                            "https://images.m-team.test/second.jpg",
+                        ],
                         "createdDate": "2026-08-23T10:00:00Z",
                         "status": {
                             "seeders": 8,
@@ -48,9 +54,45 @@ def test_search_maps_movie_result(mteam_client: MTeamClient, httpx_mock) -> None
     assert result.category == "movie"
     assert result.download_factor == 0
     assert result.seeders == 8
+    assert result.poster_url == "https://images.m-team.test/poster.jpg"
     request = httpx_mock.get_request()
     assert request.headers["x-api-key"] == "secret"
     assert request.headers["Cookie"] == "tp=secret"
+
+
+@pytest.mark.parametrize(
+    "image_list",
+    [
+        None,
+        "https://images.m-team.test/poster.jpg",
+        [],
+        ["", None, 7, "http://images.m-team.test/insecure.jpg"],
+    ],
+)
+def test_search_ignores_invalid_poster_lists(
+    mteam_client: MTeamClient,
+    httpx_mock,
+    image_list,
+) -> None:
+    httpx_mock.add_response(
+        method="POST",
+        url="https://api.m-team.test/api/torrent/search",
+        json={
+            "data": {
+                "data": [
+                    {
+                        "id": "7",
+                        "name": "Movie",
+                        "imageList": image_list,
+                    }
+                ]
+            }
+        },
+    )
+
+    result = mteam_client.search("Movie", "movie", 1)[0]
+
+    assert result.poster_url is None
 
 
 def test_search_uses_tv_categories(mteam_client: MTeamClient, httpx_mock) -> None:

@@ -19,6 +19,7 @@ class SearchServiceStub:
             upload_factor=1,
             created_at="2026-08-23T10:00:00Z",
             page_url="https://m-team.test/detail/7",
+            poster_url="https://images.m-team.test/poster.jpg",
             labels=("中字",),
         )
         return SearchPage.from_results([result], page=1, token_factory=lambda _: "source-token")
@@ -55,6 +56,7 @@ def test_search_returns_normalized_page_without_credentials(client) -> None:
     assert body["page"] == 1
     assert body["items"][0]["title"] == "Movie"
     assert body["items"][0]["source_token"] == "source-token"
+    assert body["items"][0]["poster_url"] == "https://images.m-team.test/poster.jpg"
     assert "secret" not in str(body).lower()
 
 

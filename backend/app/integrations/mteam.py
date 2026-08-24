@@ -29,6 +29,7 @@ class SearchResult:
     created_at: str | None
     page_url: str
     labels: tuple[str, ...]
+    poster_url: str | None = None
 
 
 class MTeamClient:
@@ -135,7 +136,31 @@ class MTeamClient:
             created_at=item.get("createdDate"),
             page_url=f"{self._site_url}/detail/{item.get('id')}",
             labels=tuple(str(label) for label in labels),
+            poster_url=self._poster_url(item.get("imageList")),
         )
+
+    @staticmethod
+    def _poster_url(image_list: object) -> str | None:
+        """从图片列表中选择第一个有效的 HTTPS 地址。
+
+        Args:
+            image_list: M-Team 返回的图片列表。
+
+        Returns:
+            第一个有效的 HTTPS 地址；没有时返回 None。
+        """
+        if not isinstance(image_list, list):
+            return None
+        for image in image_list:
+            if not isinstance(image, str):
+                continue
+            try:
+                parsed = urlsplit(image)
+            except ValueError:
+                continue
+            if parsed.scheme == "https" and parsed.hostname:
+                return image
+        return None
 
     @staticmethod
     def _build_api_url(site_url: str) -> str:
