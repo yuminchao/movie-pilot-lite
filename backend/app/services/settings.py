@@ -84,10 +84,31 @@ class SettingsService:
 
     def get_download_defaults(self) -> dict[str, Any]:
         """返回下载默认值或安全的首次使用值。"""
-        return self._repository().get_secret(ConfigKey.DOWNLOAD_DEFAULTS) or {
-            "category": "downloads",
-            "save_path": "/downloads",
-            "start": True,
+        value = self._repository().get_secret(ConfigKey.DOWNLOAD_DEFAULTS)
+        if value is None:
+            return {
+                "category": "downloads",
+                "save_paths": {
+                    "movie": "/downloads",
+                    "tv": "/downloads",
+                    "music": "/downloads",
+                    "other": "/downloads",
+                },
+                "start": True,
+            }
+        if "save_paths" in value:
+            return value
+
+        legacy_path = value["save_path"]
+        return {
+            "category": value["category"],
+            "save_paths": {
+                "movie": legacy_path,
+                "tv": legacy_path,
+                "music": legacy_path,
+                "other": legacy_path,
+            },
+            "start": value["start"],
         }
 
     def _required(self, key: ConfigKey) -> dict[str, Any]:

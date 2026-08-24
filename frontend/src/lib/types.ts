@@ -61,8 +61,15 @@ export interface DownloadPageData {
   refreshed_at: string
 }
 
+export interface DownloadPaths {
+  movie: string
+  tv: string
+  music: string
+  other: string
+}
+
 export interface DownloadDefaults {
   category: string
-  save_path: string
+  save_paths: DownloadPaths
   start: boolean
 }

@@ -20,17 +20,28 @@ describe('App', () => {
     expect(await screen.findByRole('heading', { name: '创建管理员密码' })).toBeInTheDocument()
   })
 
-  it('expands a result and submits qBittorrent options', async () => {
+  it('prefills a tv result after async defaults arrive and submits the edited path', async () => {
+    const defaults = {
+      category: 'series',
+      save_paths: {
+        movie: '/downloads/movies',
+        tv: '/downloads/tv',
+        music: '/downloads/music',
+        other: '/downloads/other',
+      },
+      start: true,
+    }
+    let resolveDefaults!: (value: typeof defaults) => void
     const get = vi.spyOn(api, 'get').mockImplementation((path) =>
       path === '/api/settings/downloads'
-        ? Promise.resolve({ category: 'movies', save_path: '/downloads/movies', start: true })
+        ? new Promise((resolve) => { resolveDefaults = resolve })
         : Promise.resolve({
             items: [
               {
                 source_token: 'source-7',
-                title: '流浪地球 2',
+                title: '三体',
                 description: '2160p UHD BluRay',
-                category: 'movie',
+                category: 'tv',
                 size: 30_708_154_982,
                 seeders: 126,
                 leechers: 8,
@@ -50,31 +61,91 @@ describe('App', () => {
     const user = userEvent.setup()
     render(<SearchPage />)
 
-    await user.type(screen.getByRole('searchbox'), '流浪地球 2')
+    await user.type(screen.getByRole('searchbox'), '三体')
     await user.click(screen.getByRole('button', { name: '搜索' }))
-    await user.click(await screen.findByText('流浪地球 2'))
-    expect(screen.getByLabelText('保存路径')).toBeVisible()
+    await user.click(await screen.findByText('三体'))
+    await act(async () => { resolveDefaults(defaults) })
+    expect(screen.getByLabelText('保存路径')).toHaveValue('/downloads/tv')
+    await user.clear(screen.getByLabelText('保存路径'))
+    await user.type(screen.getByLabelText('保存路径'), '/downloads/custom-tv')
     await user.click(screen.getByRole('button', { name: '确认推送' }))
 
     expect(get).toHaveBeenCalledWith(expect.stringContaining('/api/search?'))
     expect(get).toHaveBeenCalledWith('/api/settings/downloads')
     expect(post).toHaveBeenCalledWith('/api/downloads', {
       source_token: 'source-7',
-      category: 'movies',
-      save_path: '/downloads/movies',
+      category: 'series',
+      save_path: '/downloads/custom-tv',
       start: true,
     })
+  })
+
+  it('uses the other path for a result with category all', async () => {
+    vi.spyOn(api, 'get').mockImplementation((path) =>
+      path === '/api/settings/downloads'
+        ? Promise.resolve({
+            category: 'misc',
+            save_paths: {
+              movie: '/downloads/movies',
+              tv: '/downloads/tv',
+              music: '/downloads/music',
+              other: '/downloads/other',
+            },
+            start: true,
+          })
+        : Promise.resolve({
+            items: [{
+              source_token: 'source-other',
+              title: '未分类资源',
+              description: '',
+              category: 'all',
+              size: 1024,
+              seeders: 1,
+              leechers: 0,
+              downloads: 0,
+              download_factor: 1,
+              upload_factor: 1,
+              created_at: null,
+              page_url: 'https://m-team.test/detail/other',
+              labels: [],
+            }],
+            page: 1,
+            has_more: false,
+          }),
+    )
+    const user = userEvent.setup()
+    render(<SearchPage />)
+
+    await user.type(screen.getByRole('searchbox'), '未分类资源')
+    await user.click(screen.getByRole('button', { name: '搜索' }))
+    await user.click(await screen.findByText('未分类资源'))
+
+    expect(screen.getByLabelText('保存路径')).toHaveValue('/downloads/other')
   })
 
   it('saves configurable qBittorrent download defaults', async () => {
     vi.spyOn(api, 'get').mockImplementation((path) =>
       path === '/api/settings/downloads'
-        ? Promise.resolve({ category: 'downloads', save_path: '/downloads', start: true })
+        ? Promise.resolve({
+            category: 'downloads',
+            save_paths: {
+              movie: '/downloads/movies',
+              tv: '/downloads/tv',
+              music: '/downloads/music',
+              other: '/downloads/other',
+            },
+            start: true,
+          })
         : Promise.resolve({ configured: false, masked: null, updated_at: null }),
     )
     const put = vi.spyOn(api, 'put').mockResolvedValue({
       category: 'media',
-      save_path: '/downloads/media',
+      save_paths: {
+        movie: '/media/movies',
+        tv: '/media/tv',
+        music: '/media/music',
+        other: '/media/other',
+      },
       start: false,
     })
     const user = userEvent.setup()
@@ -83,14 +154,30 @@ describe('App', () => {
     await screen.findByDisplayValue('downloads')
     await user.clear(screen.getByLabelText('默认分类'))
     await user.type(screen.getByLabelText('默认分类'), 'media')
-    await user.clear(screen.getByLabelText('默认保存路径'))
-    await user.type(screen.getByLabelText('默认保存路径'), '/downloads/media')
+    expect(screen.getByLabelText('电影保存路径')).toHaveValue('/downloads/movies')
+    expect(screen.getByLabelText('电视剧保存路径')).toHaveValue('/downloads/tv')
+    expect(screen.getByLabelText('音乐保存路径')).toHaveValue('/downloads/music')
+    expect(screen.getByLabelText('其他保存路径')).toHaveValue('/downloads/other')
+    for (const [label, value] of [
+      ['电影保存路径', '/media/movies'],
+      ['电视剧保存路径', '/media/tv'],
+      ['音乐保存路径', '/media/music'],
+      ['其他保存路径', '/media/other'],
+    ]) {
+      await user.clear(screen.getByLabelText(label))
+      await user.type(screen.getByLabelText(label), value)
+    }
     await user.selectOptions(screen.getByLabelText('默认启动方式'), 'paused')
     await user.click(screen.getByRole('button', { name: '保存默认值' }))
 
     expect(put).toHaveBeenCalledWith('/api/settings/downloads', {
       category: 'media',
-      save_path: '/downloads/media',
+      save_paths: {
+        movie: '/media/movies',
+        tv: '/media/tv',
+        music: '/media/music',
+        other: '/media/other',
+      },
       start: false,
     })
   })
@@ -112,7 +199,11 @@ describe('App', () => {
     vi.spyOn(api, 'get').mockImplementation((path) => {
       if (path === '/api/settings/mteam') return Promise.resolve(mteamSettings)
       if (path === '/api/settings/downloads') {
-        return Promise.resolve({ category: 'downloads', save_path: '/downloads', start: true })
+        return Promise.resolve({
+          category: 'downloads',
+          save_paths: { movie: '/downloads', tv: '/downloads', music: '/downloads', other: '/downloads' },
+          start: true,
+        })
       }
       return Promise.resolve({ configured: false, masked: null, updated_at: null })
     })
@@ -181,7 +272,11 @@ describe('App', () => {
     vi.spyOn(api, 'get').mockImplementation((path) => {
       if (path === '/api/settings/mteam') return Promise.resolve(initialSettings)
       if (path === '/api/settings/downloads') {
-        return Promise.resolve({ category: 'downloads', save_path: '/downloads', start: true })
+        return Promise.resolve({
+          category: 'downloads',
+          save_paths: { movie: '/downloads', tv: '/downloads', music: '/downloads', other: '/downloads' },
+          start: true,
+        })
       }
       return Promise.resolve({ configured: false, masked: null, updated_at: null })
     })

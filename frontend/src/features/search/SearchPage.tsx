@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from 'react'
+import { FormEvent, useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronDown, ChevronLeft, ChevronRight, Search, Send } from 'lucide-react'
 
 import { api, ApiError } from '../../lib/api'
@@ -24,7 +24,12 @@ export function SearchPage() {
   const [notice, setNotice] = useState('')
   const [downloadDefaults, setDownloadDefaults] = useState<DownloadDefaults>({
     category: 'downloads',
-    save_path: '/downloads',
+    save_paths: {
+      movie: '/downloads',
+      tv: '/downloads',
+      music: '/downloads',
+      other: '/downloads',
+    },
     start: true,
   })
 
@@ -141,10 +146,19 @@ export function SearchPage() {
 
 function ResultRow({ item, expanded, onToggle, onSuccess, defaults }: { item: SearchItem; expanded: boolean; onToggle: () => void; onSuccess: () => void; defaults: DownloadDefaults }) {
   const [qbCategory, setQbCategory] = useState(defaults.category)
-  const [savePath, setSavePath] = useState(defaults.save_path)
+  const [savePath, setSavePath] = useState(() => defaultSavePath(item.category, defaults))
   const [start, setStart] = useState(defaults.start)
   const [sending, setSending] = useState(false)
   const [error, setError] = useState('')
+  const categoryEdited = useRef(false)
+  const savePathEdited = useRef(false)
+  const startEdited = useRef(false)
+
+  useEffect(() => {
+    if (!categoryEdited.current) setQbCategory(defaults.category)
+    if (!savePathEdited.current) setSavePath(defaultSavePath(item.category, defaults))
+    if (!startEdited.current) setStart(defaults.start)
+  }, [defaults, item.category])
 
   async function push() {
     setSending(true)
@@ -174,15 +188,22 @@ function ResultRow({ item, expanded, onToggle, onSuccess, defaults }: { item: Se
       </div>
       {expanded ? (
         <div className="download-options">
-          <label>qB 分类<input value={qbCategory} onChange={(event) => setQbCategory(event.target.value)} /></label>
-          <label>保存路径<input value={savePath} onChange={(event) => setSavePath(event.target.value)} /></label>
-          <label>启动方式<select value={start ? 'start' : 'paused'} onChange={(event) => setStart(event.target.value === 'start')}><option value="start">立即开始</option><option value="paused">暂停添加</option></select></label>
+          <label>qB 分类<input value={qbCategory} onChange={(event) => { categoryEdited.current = true; setQbCategory(event.target.value) }} /></label>
+          <label>保存路径<input value={savePath} onChange={(event) => { savePathEdited.current = true; setSavePath(event.target.value) }} /></label>
+          <label>启动方式<select value={start ? 'start' : 'paused'} onChange={(event) => { startEdited.current = true; setStart(event.target.value === 'start') }}><option value="start">立即开始</option><option value="paused">暂停添加</option></select></label>
           <button className="primary-button push-button" type="button" disabled={sending} onClick={push}><Send size={16} />{sending ? '推送中...' : '确认推送'}</button>
           {error ? <p className="inline-error" role="alert">{error}</p> : null}
         </div>
       ) : null}
     </div>
   )
+}
+
+function defaultSavePath(category: Category, defaults: DownloadDefaults) {
+  if (category === 'movie' || category === 'tv' || category === 'music') {
+    return defaults.save_paths[category]
+  }
+  return defaults.save_paths.other
 }
 
 function Promotion({ factor, upload }: { factor: number; upload: number }) {

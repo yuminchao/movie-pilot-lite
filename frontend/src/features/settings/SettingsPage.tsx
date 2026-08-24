@@ -38,16 +38,20 @@ export function SettingsPage() {
 
 function DownloadDefaultsForm({ value, onSaved }: { value: DownloadDefaults; onSaved: (value: DownloadDefaults) => void }) {
   const [category, setCategory] = useState(value.category)
-  const [savePath, setSavePath] = useState(value.save_path)
+  const [savePaths, setSavePaths] = useState(value.save_paths)
   const [start, setStart] = useState(value.start)
   const [message, setMessage] = useState('')
+
+  function updateSavePath(type: keyof DownloadDefaults['save_paths'], path: string) {
+    setSavePaths((current) => ({ ...current, [type]: path }))
+  }
 
   async function save(event: FormEvent) {
     event.preventDefault()
     try {
       const result = await api.put<DownloadDefaults>('/api/settings/downloads', {
         category,
-        save_path: savePath,
+        save_paths: savePaths,
         start,
       })
       onSaved(result)
@@ -62,7 +66,10 @@ function DownloadDefaultsForm({ value, onSaved }: { value: DownloadDefaults; onS
       <div className="section-title"><span className="section-icon defaults"><FolderDown size={20} /></span><div><h2>下载默认值</h2><p>搜索结果展开时预填，单条任务仍可覆盖</p></div></div>
       <form className="defaults-form" onSubmit={save}>
         <label>默认分类<input value={category} onChange={(event) => setCategory(event.target.value)} /></label>
-        <label>默认保存路径<input value={savePath} onChange={(event) => setSavePath(event.target.value)} /></label>
+        <label>电影保存路径<input value={savePaths.movie} onChange={(event) => updateSavePath('movie', event.target.value)} /></label>
+        <label>电视剧保存路径<input value={savePaths.tv} onChange={(event) => updateSavePath('tv', event.target.value)} /></label>
+        <label>音乐保存路径<input value={savePaths.music} onChange={(event) => updateSavePath('music', event.target.value)} /></label>
+        <label>其他保存路径<input value={savePaths.other} onChange={(event) => updateSavePath('other', event.target.value)} /></label>
         <label>默认启动方式<select value={start ? 'start' : 'paused'} onChange={(event) => setStart(event.target.value === 'start')}><option value="start">立即开始</option><option value="paused">暂停添加</option></select></label>
         <button className="primary-button" type="submit">保存默认值</button>
         {message ? <p className="settings-message" role="status">{message}</p> : null}

@@ -1,6 +1,9 @@
 from unittest.mock import Mock
 
+import pytest
+
 import app.services.settings as settings_module
+from app.config.repository import ConfigKey, ConfigRepository
 
 
 MASKED_VALUE = "••••••••"
@@ -261,19 +264,90 @@ def test_connection_test_requires_saved_configuration(client) -> None:
 def test_download_defaults_can_be_configured(client) -> None:
     _login(client)
 
+    expected = {
+        "category": "media",
+        "save_paths": {
+            "movie": "/downloads/movies",
+            "tv": "/downloads/tv",
+            "music": "D:\\downloads\\music",
+            "other": "/downloads/other",
+        },
+        "start": False,
+    }
     saved = client.put(
         "/api/settings/downloads",
-        json={
-            "category": "media",
-            "save_path": "/downloads/media",
-            "start": False,
-        },
+        json=expected,
     )
     loaded = client.get("/api/settings/downloads")
 
     assert saved.status_code == 200
-    assert loaded.json() == {
-        "category": "media",
-        "save_path": "/downloads/media",
+    assert saved.json() == expected
+    assert loaded.json() == expected
+
+
+@pytest.mark.parametrize("path_key", ["movie", "tv", "music", "other"])
+def test_download_defaults_reject_relative_path(client, path_key: str) -> None:
+    _login(client)
+    save_paths = {
+        "movie": "/downloads/movies",
+        "tv": "/downloads/tv",
+        "music": "/downloads/music",
+        "other": "/downloads/other",
+    }
+    save_paths[path_key] = "relative/downloads"
+
+    response = client.put(
+        "/api/settings/downloads",
+        json={
+            "category": "media",
+            "save_path": "/downloads",
+            "save_paths": save_paths,
+            "start": True,
+        },
+    )
+
+    assert response.status_code == 422
+
+
+def test_legacy_download_defaults_fill_all_save_paths(client) -> None:
+    _login(client)
+    repository = ConfigRepository(
+        client.app.state.database.session_factory,
+        client.app.state.secret_vault.cipher,
+    )
+    repository.set_secret(
+        ConfigKey.DOWNLOAD_DEFAULTS,
+        {"category": "legacy", "save_path": "/legacy/downloads", "start": False},
+    )
+
+    response = client.get("/api/settings/downloads")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "category": "legacy",
+        "save_paths": {
+            "movie": "/legacy/downloads",
+            "tv": "/legacy/downloads",
+            "music": "/legacy/downloads",
+            "other": "/legacy/downloads",
+        },
         "start": False,
+    }
+
+
+def test_unconfigured_download_defaults_return_safe_defaults(client) -> None:
+    _login(client)
+
+    response = client.get("/api/settings/downloads")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "category": "downloads",
+        "save_paths": {
+            "movie": "/downloads",
+            "tv": "/downloads",
+            "music": "/downloads",
+            "other": "/downloads",
+        },
+        "start": True,
     }

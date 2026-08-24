@@ -36,21 +36,32 @@ class QbittorrentSettingsRequest(BaseModel):
         raise ValueError("请提供 qBittorrent API Key 或用户名和密码")
 
 
+class DownloadPathsRequest(BaseModel):
+    """按资源类型配置的 qBittorrent 保存路径。"""
+
+    movie: str = Field(min_length=1, max_length=1000)
+    tv: str = Field(min_length=1, max_length=1000)
+    music: str = Field(min_length=1, max_length=1000)
+    other: str = Field(min_length=1, max_length=1000)
+
+    @model_validator(mode="after")
+    def validate_save_paths(self) -> "DownloadPathsRequest":
+        """要求所有保存路径均为 Unix 或 Windows 绝对路径。"""
+        for save_path in (self.movie, self.tv, self.music, self.other):
+            if not (
+                PurePosixPath(save_path).is_absolute()
+                or PureWindowsPath(save_path).is_absolute()
+            ):
+                raise ValueError("保存路径必须是绝对路径")
+        return self
+
+
 class DownloadDefaultsRequest(BaseModel):
     """qBittorrent 任务默认参数。"""
 
     category: str = Field(min_length=1, max_length=100)
-    save_path: str = Field(min_length=1, max_length=1000)
+    save_paths: DownloadPathsRequest
     start: bool = True
-
-    @model_validator(mode="after")
-    def validate_save_path(self) -> "DownloadDefaultsRequest":
-        """要求保存路径适用于 Unix 或 Windows qBittorrent。"""
-        if PurePosixPath(self.save_path).is_absolute() or PureWindowsPath(
-            self.save_path
-        ).is_absolute():
-            return self
-        raise ValueError("保存路径必须是绝对路径")
 
 
 def get_settings_service(request: Request) -> SettingsService:
