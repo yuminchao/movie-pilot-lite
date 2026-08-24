@@ -1,5 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor
-from datetime import UTC, datetime, time, timedelta
+from datetime import UTC, datetime, time, timedelta, timezone
 from pathlib import Path
 from threading import Event, Lock
 from zoneinfo import ZoneInfo
@@ -567,3 +567,67 @@ def test_retry_wait_saturates_at_datetime_max(
     maximum = datetime.max.replace(tzinfo=UTC)
 
     assert service.seconds_until_next(maximum) == 86_400
+
+
+def test_negative_offset_datetime_max_has_finite_wait(
+    repository: ConfigRepository,
+) -> None:
+    local_timezone = ZoneInfo("America/New_York")
+    service = CheckinService(repository, lambda _: FakeMTeamClient(), local_timezone)
+    repository.set_secret(
+        ConfigKey.MTEAM_CHECKIN,
+        {
+            "enabled": True,
+            "execution_time": "09:00",
+            "last_success_date": "9999-12-31",
+        },
+    )
+    maximum = datetime.max.replace(tzinfo=local_timezone)
+
+    assert service.seconds_until_next(maximum) == 86_400
+
+
+def test_negative_offset_datetime_max_does_not_repeat_success(
+    repository: ConfigRepository,
+) -> None:
+    local_timezone = ZoneInfo("Pacific/Honolulu")
+    client = FakeMTeamClient()
+    service = CheckinService(repository, lambda _: client, local_timezone)
+    repository.set_secret(
+        ConfigKey.MTEAM_CHECKIN,
+        {
+            "enabled": True,
+            "execution_time": "09:00",
+            "last_success_date": "9999-12-31",
+        },
+    )
+    maximum = datetime.max.replace(tzinfo=local_timezone)
+
+    assert service.run_due(maximum) is False
+    assert client.calls == 0
+
+
+def test_positive_offset_datetime_min_has_finite_wait(
+    repository: ConfigRepository,
+) -> None:
+    local_timezone = timezone(timedelta(hours=14))
+    service = CheckinService(repository, lambda _: FakeMTeamClient(), local_timezone)
+    service.save_settings(True, time(23, 0))
+    minimum = datetime.min.replace(tzinfo=local_timezone)
+
+    wait = service.seconds_until_next(minimum)
+
+    assert 1 <= wait <= 86_400
+
+
+def test_positive_offset_datetime_min_runs_only_when_due(
+    repository: ConfigRepository,
+) -> None:
+    local_timezone = timezone(timedelta(hours=14))
+    client = FakeMTeamClient()
+    service = CheckinService(repository, lambda _: client, local_timezone)
+    service.save_settings(True, time(23, 0))
+    minimum = datetime.min.replace(tzinfo=local_timezone)
+
+    assert service.run_due(minimum) is False
+    assert client.calls == 0

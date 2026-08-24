@@ -14,6 +14,8 @@ _DEFAULT_EXECUTION_TIME = "09:00"
 _RETRY_DELAY = timedelta(minutes=30)
 _DISABLED_WAIT_SECONDS = 24 * 60 * 60
 _MAX_ATTEMPTS = 2
+_UTC_MAX = datetime.max.replace(tzinfo=UTC)
+_UTC_MIN = datetime.min.replace(tzinfo=UTC)
 logger = logging.getLogger(__name__)
 
 
@@ -366,11 +368,26 @@ class CheckinService:
 
     @staticmethod
     def _instant(value: datetime) -> datetime:
-        return value.astimezone(UTC)
+        """转换为可比较的 UTC 时刻，并在 datetime 年份边界饱和。
 
-    @staticmethod
-    def _seconds_between(now: datetime, target: datetime) -> int:
-        elapsed = target.astimezone(UTC) - now.astimezone(UTC)
+        Args:
+            value: 带时区的时间。
+
+        Returns:
+            UTC aware datetime；偏移换算越界时返回对应的 UTC 极值。
+        """
+        try:
+            return value.astimezone(UTC)
+        except OverflowError:
+            offset = value.utcoffset()
+            if offset is not None and offset < timedelta(0):
+                return _UTC_MAX
+            if offset is not None and offset > timedelta(0):
+                return _UTC_MIN
+            raise
+
+    def _seconds_between(self, now: datetime, target: datetime) -> int:
+        elapsed = self._instant(target) - self._instant(now)
         return max(1, math.ceil(elapsed.total_seconds()))
 
     @staticmethod
