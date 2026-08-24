@@ -63,6 +63,7 @@ class CheckinScheduler:
         self._stop_event: asyncio.Event | None = None
         self._runner: asyncio.Task[None] | None = None
         self._wake_generation = 0
+        self._seen_generation = 0
 
     @property
     def is_running(self) -> bool:
@@ -84,7 +85,7 @@ class CheckinScheduler:
             self._wake_event = asyncio.Event()
             self._stop_event = asyncio.Event()
             self._runner = loop.create_task(
-                self._run(),
+                self._run(self._seen_generation),
                 name="checkin-scheduler",
             )
 
@@ -118,31 +119,38 @@ class CheckinScheduler:
                 return
             loop.call_soon_threadsafe(wake_event.set)
 
-    async def _run(self) -> None:
-        """持续执行到期签到并根据配置或异常安排下一轮。"""
-        seen_generation = 0
-        while not self._is_stopping():
-            delay: float | None = None
-            try:
-                if self._unlocked():
-                    service = self._service_factory()
-                    now = datetime.now(UTC)
-                    await asyncio.to_thread(service.run_due, now)
-                    if self._is_stopping():
-                        break
-                    delay = max(
-                        1,
-                        await asyncio.to_thread(
-                            service.seconds_until_next,
-                            datetime.now(UTC),
-                        ),
-                    )
-            except Exception as error:
-                logger.warning("自动签到调度异常类型: %s", type(error).__name__)
-                delay = self._fallback_delay
-            if self._is_stopping():
-                break
-            seen_generation = await self._wait(delay, seen_generation)
+    async def _run(self, seen_generation: int) -> None:
+        """持续执行到期签到并根据配置或异常安排下一轮。
+
+        Args:
+            seen_generation: 前一运行代次已消费的唤醒代次。
+        """
+        try:
+            while not self._is_stopping():
+                delay: float | None = None
+                try:
+                    if self._unlocked():
+                        service = self._service_factory()
+                        now = datetime.now(UTC)
+                        await asyncio.to_thread(service.run_due, now)
+                        if self._is_stopping():
+                            break
+                        delay = max(
+                            1,
+                            await asyncio.to_thread(
+                                service.seconds_until_next,
+                                datetime.now(UTC),
+                            ),
+                        )
+                except Exception as error:
+                    logger.warning("自动签到调度异常类型: %s", type(error).__name__)
+                    delay = self._fallback_delay
+                if self._is_stopping():
+                    break
+                seen_generation = await self._wait(delay, seen_generation)
+        finally:
+            with self._state_lock:
+                self._seen_generation = seen_generation
 
     async def _wait(self, delay: float | None, seen_generation: int) -> int:
         """等待超时、停止或新唤醒代次，同时封闭丢失唤醒窗口。

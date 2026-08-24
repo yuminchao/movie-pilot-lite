@@ -142,12 +142,15 @@ async def test_wake_during_synchronous_run_is_not_lost() -> None:
     service.release_run = threading.Event()
     scheduler = CheckinScheduler(lambda: service, lambda: True)
     scheduler.start()
-    await asyncio.wait_for(service.run_entered.wait(), timeout=1)
+    try:
+        await asyncio.wait_for(service.run_entered.wait(), timeout=1)
 
-    scheduler.wake()
-    service.release_run.set()
-    await _wait_for_count(service.run_calls, 2)
-    await scheduler.stop()
+        scheduler.wake()
+        service.release_run.set()
+        await _wait_for_count(service.run_calls, 2)
+    finally:
+        service.release_run.set()
+        await scheduler.stop()
 
 
 @pytest.mark.asyncio
@@ -286,21 +289,84 @@ async def test_repeated_start_creates_one_runner() -> None:
 
 
 @pytest.mark.asyncio
+async def test_restart_does_not_replay_historical_wake(monkeypatch) -> None:
+    loop = asyncio.get_running_loop()
+    service = FakeCheckinService(loop)
+    scheduler = CheckinScheduler(lambda: service, lambda: True)
+    scheduler.start()
+    await asyncio.wait_for(service.called.wait(), timeout=1)
+    scheduler.wake()
+    await _wait_for_count(service.run_calls, 2)
+    await scheduler.stop()
+
+    restart_waiting = asyncio.Event()
+    original_wait_for = asyncio.wait_for
+
+    async def observe_wait(awaitable, timeout):
+        restart_waiting.set()
+        return await original_wait_for(awaitable, timeout)
+
+    monkeypatch.setattr(scheduler_module.asyncio, "wait_for", observe_wait)
+    scheduler.start()
+    try:
+        async with asyncio.timeout(1):
+            await restart_waiting.wait()
+        assert len(service.run_calls) == 3
+    finally:
+        await scheduler.stop()
+
+
+@pytest.mark.asyncio
+async def test_wake_after_stop_is_retained_for_restart(monkeypatch) -> None:
+    loop = asyncio.get_running_loop()
+    service = FakeCheckinService(loop)
+    scheduler = CheckinScheduler(lambda: service, lambda: True)
+    scheduler.start()
+    await asyncio.wait_for(service.called.wait(), timeout=1)
+    await scheduler.stop()
+
+    scheduler.wake()
+    restart_waiting = asyncio.Event()
+    original_wait_for = asyncio.wait_for
+
+    async def observe_wait(awaitable, timeout):
+        restart_waiting.set()
+        return await original_wait_for(awaitable, timeout)
+
+    monkeypatch.setattr(scheduler_module.asyncio, "wait_for", observe_wait)
+    scheduler.start()
+    try:
+        async with asyncio.timeout(1):
+            await restart_waiting.wait()
+        assert len(service.run_calls) == 3
+    finally:
+        await scheduler.stop()
+
+
+@pytest.mark.asyncio
 async def test_stop_waits_for_in_flight_synchronous_run() -> None:
     loop = asyncio.get_running_loop()
     service = FakeCheckinService(loop)
     service.release_run = threading.Event()
     scheduler = CheckinScheduler(lambda: service, lambda: True)
     scheduler.start()
-    await asyncio.wait_for(service.run_entered.wait(), timeout=1)
+    stopping: asyncio.Task[None] | None = None
+    try:
+        await asyncio.wait_for(service.run_entered.wait(), timeout=1)
 
-    stopping = asyncio.create_task(scheduler.stop())
-    await asyncio.sleep(0)
-    assert stopping.done() is False
+        stopping = asyncio.create_task(scheduler.stop())
+        await asyncio.sleep(0)
+        assert stopping.done() is False
 
-    service.release_run.set()
-    await asyncio.wait_for(stopping, timeout=1)
-    assert scheduler.is_running is False
+        service.release_run.set()
+        await asyncio.wait_for(asyncio.shield(stopping), timeout=1)
+        assert scheduler.is_running is False
+    finally:
+        service.release_run.set()
+        if stopping is None:
+            await scheduler.stop()
+        else:
+            await stopping
 
 
 @pytest.mark.asyncio
