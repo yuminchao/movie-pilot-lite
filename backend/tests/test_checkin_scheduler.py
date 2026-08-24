@@ -24,7 +24,9 @@ class FakeCheckinService:
         self.delay_calls: list[datetime] = []
         self.called = asyncio.Event()
         self.run_entered = asyncio.Event()
+        self.delay_entered = asyncio.Event()
         self.release_run: threading.Event | None = None
+        self.release_delay: threading.Event | None = None
         self.run_error: Exception | None = None
 
     def run_due(self, now: datetime) -> bool:
@@ -40,6 +42,9 @@ class FakeCheckinService:
     def seconds_until_next(self, now: datetime) -> int:
         self.delay_calls.append(now)
         self.loop.call_soon_threadsafe(self.called.set)
+        self.loop.call_soon_threadsafe(self.delay_entered.set)
+        if self.release_delay is not None:
+            self.release_delay.wait()
         return self.delay
 
 
@@ -146,20 +151,99 @@ async def test_wake_during_synchronous_run_is_not_lost() -> None:
 
 
 @pytest.mark.asyncio
-async def test_unexpected_exception_keeps_runner_alive(caplog) -> None:
+async def test_wake_during_delay_calculation_is_not_lost() -> None:
+    loop = asyncio.get_running_loop()
+    service = FakeCheckinService(loop)
+    service.release_delay = threading.Event()
+    scheduler = CheckinScheduler(lambda: service, lambda: True)
+    scheduler.start()
+    try:
+        await asyncio.wait_for(service.delay_entered.wait(), timeout=1)
+
+        waking_thread = threading.Thread(target=scheduler.wake)
+        waking_thread.start()
+        waking_thread.join()
+        await asyncio.sleep(0)
+        service.release_delay.set()
+
+        await _wait_for_count(service.run_calls, 2)
+    finally:
+        service.release_delay.set()
+        await scheduler.stop()
+
+
+@pytest.mark.asyncio
+async def test_wake_interrupts_exception_fallback_wait(monkeypatch, caplog) -> None:
     loop = asyncio.get_running_loop()
     service = FakeCheckinService(loop)
     service.run_error = RuntimeError("credential-value")
-    scheduler = CheckinScheduler(lambda: service, lambda: True, fallback_delay=0.01)
-    scheduler.start()
-    await asyncio.wait_for(service.run_entered.wait(), timeout=1)
+    fallback_waiting = asyncio.Event()
+    original_wait_for = asyncio.wait_for
 
-    await _wait_for_count(service.run_calls, 2)
-    await scheduler.stop()
+    async def observe_wait(awaitable, timeout):
+        if timeout == 3600:
+            fallback_waiting.set()
+        return await original_wait_for(awaitable, timeout)
+
+    monkeypatch.setattr(scheduler_module.asyncio, "wait_for", observe_wait)
+    scheduler = CheckinScheduler(lambda: service, lambda: True, fallback_delay=3600)
+    scheduler.start()
+    try:
+        async with asyncio.timeout(1):
+            await fallback_waiting.wait()
+
+        waking_thread = threading.Thread(target=scheduler.wake)
+        waking_thread.start()
+        waking_thread.join()
+        await _wait_for_count(service.run_calls, 2)
+    finally:
+        await scheduler.stop()
 
     assert scheduler.is_running is False
     assert "RuntimeError" in caplog.text
     assert "credential-value" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_factory_exception_is_redacted_and_wake_retries(
+    monkeypatch,
+    caplog,
+) -> None:
+    loop = asyncio.get_running_loop()
+    service = FakeCheckinService(loop)
+    fallback_waiting = asyncio.Event()
+    original_wait_for = asyncio.wait_for
+    factory_calls = 0
+
+    def factory() -> FakeCheckinService:
+        nonlocal factory_calls
+        factory_calls += 1
+        if factory_calls == 1:
+            raise RuntimeError("secret-detail")
+        return service
+
+    async def observe_wait(awaitable, timeout):
+        if timeout == 3600:
+            fallback_waiting.set()
+        return await original_wait_for(awaitable, timeout)
+
+    monkeypatch.setattr(scheduler_module.asyncio, "wait_for", observe_wait)
+    scheduler = CheckinScheduler(factory, lambda: True, fallback_delay=3600)
+    scheduler.start()
+    try:
+        async with asyncio.timeout(1):
+            await fallback_waiting.wait()
+
+        waking_thread = threading.Thread(target=scheduler.wake)
+        waking_thread.start()
+        waking_thread.join()
+        await asyncio.wait_for(service.run_entered.wait(), timeout=1)
+    finally:
+        await scheduler.stop()
+
+    assert factory_calls == 2
+    assert "RuntimeError" in caplog.text
+    assert "secret-detail" not in caplog.text
 
 
 @pytest.mark.asyncio
