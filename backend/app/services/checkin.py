@@ -1,11 +1,10 @@
 import math
 from collections.abc import Callable
-from datetime import UTC, datetime, time, timedelta, tzinfo
+from datetime import UTC, date, datetime, time, timedelta, tzinfo
 from threading import RLock
 from typing import Any, Protocol
 
 from app.config.repository import ConfigKey, ConfigRepository
-from app.integrations.mteam import IntegrationError
 
 
 _DEFAULT_EXECUTION_TIME = "09:00"
@@ -19,7 +18,7 @@ class _CheckinClient(Protocol):
         """执行一次第三方签到。
 
         Raises:
-            IntegrationError: 第三方签到失败。
+            Exception: 第三方签到失败。
         """
         ...
 
@@ -38,7 +37,15 @@ class CheckinService:
         self._timezone = timezone
 
     def read_settings(self) -> dict[str, Any]:
-        """返回归一化后的公开签到设置与运行状态。"""
+        """返回归一化后的公开签到设置与运行状态。
+
+        Returns:
+            不包含内部重试字段的签到设置与运行状态。
+
+        Raises:
+            ValueError: 已有加密配置无效。
+            sqlalchemy.exc.SQLAlchemyError: 配置仓库读取失败。
+        """
         return self._public_view(self._load())
 
     def save_settings(self, enabled: bool, execution_time: time) -> dict[str, Any]:
@@ -50,6 +57,10 @@ class CheckinService:
 
         Returns:
             保存后的公开签到设置与运行状态。
+
+        Raises:
+            ValueError: 已有加密配置无效。
+            sqlalchemy.exc.SQLAlchemyError: 配置仓库读写失败。
         """
         with _state_lock:
             value = self._load()
@@ -68,7 +79,8 @@ class CheckinService:
             本次是否实际消耗了一次签到尝试。
 
         Raises:
-            ValueError: 当前时间不带时区。
+            ValueError: 当前时间不带时区或已有加密配置无效。
+            sqlalchemy.exc.SQLAlchemyError: 配置仓库读写失败。
         """
         with _state_lock:
             local_now = self._local_time(now)
@@ -91,7 +103,7 @@ class CheckinService:
             else:
                 try:
                     self._client_factory(connection).check_in()
-                except (IntegrationError, ValueError, TypeError):
+                except Exception:
                     value.update(success=False, message="签到失败")
                 else:
                     value.update(
@@ -112,7 +124,8 @@ class CheckinService:
             不小于一秒的等待时长；禁用时返回二十四小时。
 
         Raises:
-            ValueError: 当前时间不带时区。
+            ValueError: 当前时间不带时区或已有加密配置无效。
+            sqlalchemy.exc.SQLAlchemyError: 配置仓库读取失败。
         """
         local_now = self._local_time(now)
         value = self._load()
@@ -120,15 +133,15 @@ class CheckinService:
             return _DISABLED_WAIT_SECONDS
 
         local_date = local_now.date().isoformat()
-        scheduled = datetime.combine(
-            local_now.date(),
-            time.fromisoformat(value["execution_time"]),
-            self._timezone,
+        scheduled = self._scheduled_at(local_now.date(), value["execution_time"])
+        next_scheduled = self._scheduled_at(
+            local_now.date() + timedelta(days=1),
+            value["execution_time"],
         )
-        if local_now < scheduled:
+        if self._instant(local_now) < self._instant(scheduled):
             return self._seconds_between(local_now, scheduled)
         if value["last_success_date"] == local_date:
-            return self._seconds_between(local_now, scheduled + timedelta(days=1))
+            return self._seconds_between(local_now, next_scheduled)
 
         attempts = self._attempts_for(value, local_date)
         if attempts == 0:
@@ -137,11 +150,12 @@ class CheckinService:
             last_attempt = self._parse_attempt(value["last_attempt_at"])
             if last_attempt is None:
                 return 1
-            retry_at = last_attempt + _RETRY_DELAY
-            if retry_at.date() != local_now.date():
-                return self._seconds_between(local_now, scheduled + timedelta(days=1))
+            retry_at = self._instant(last_attempt) + _RETRY_DELAY
+            retry_local_date = retry_at.astimezone(self._timezone).date()
+            if retry_local_date != local_now.date():
+                return self._seconds_between(local_now, next_scheduled)
             return self._seconds_between(local_now, retry_at)
-        return self._seconds_between(local_now, scheduled + timedelta(days=1))
+        return self._seconds_between(local_now, next_scheduled)
 
     def _is_due(
         self,
@@ -161,12 +175,11 @@ class CheckinService:
         """
         if not value["enabled"]:
             return False
-        scheduled = datetime.combine(
-            local_now.date(),
-            time.fromisoformat(value["execution_time"]),
-            self._timezone,
-        )
-        if local_now < scheduled or value["last_success_date"] == local_date:
+        scheduled = self._scheduled_at(local_now.date(), value["execution_time"])
+        if (
+            self._instant(local_now) < self._instant(scheduled)
+            or value["last_success_date"] == local_date
+        ):
             return False
         attempts = self._attempts_for(value, local_date)
         if attempts >= 2:
@@ -174,10 +187,20 @@ class CheckinService:
         if attempts == 0:
             return True
         last_attempt = self._parse_attempt(value["last_attempt_at"])
-        return last_attempt is None or local_now >= last_attempt + _RETRY_DELAY
+        return last_attempt is None or self._instant(local_now) >= (
+            self._instant(last_attempt) + _RETRY_DELAY
+        )
 
     def _load(self) -> dict[str, Any]:
-        """读取并归一化旧版或缺字段的签到配置。"""
+        """读取并归一化旧版或缺字段的签到配置。
+
+        Returns:
+            包含公开设置和内部重试字段的完整配置。
+
+        Raises:
+            ValueError: 加密配置无法解密或结构无效。
+            sqlalchemy.exc.SQLAlchemyError: 配置仓库读取失败。
+        """
         stored = self._repository.get_secret(ConfigKey.MTEAM_CHECKIN)
         if stored is None:
             stored = {}
@@ -234,6 +257,27 @@ class CheckinService:
         if parsed.tzinfo is None or parsed.utcoffset() is None:
             return None
         return parsed
+
+    def _scheduled_at(self, local_date: date, execution_time: str) -> datetime:
+        """构造每日执行时刻，歧义或不存在的本地时间固定选择 fold=0。
+
+        Args:
+            local_date: 应用时区内的执行日期。
+            execution_time: 已归一化为 HH:MM 的执行时间。
+
+        Returns:
+            带应用时区且 fold 固定为 0 的执行时刻。
+        """
+        scheduled = datetime.combine(
+            local_date,
+            time.fromisoformat(execution_time),
+            self._timezone,
+        )
+        return scheduled.replace(fold=0)
+
+    @staticmethod
+    def _instant(value: datetime) -> datetime:
+        return value.astimezone(UTC)
 
     @staticmethod
     def _seconds_between(now: datetime, target: datetime) -> int:
