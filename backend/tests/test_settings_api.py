@@ -142,6 +142,44 @@ def test_first_mteam_save_rejects_masked_secrets(client) -> None:
     assert cookie_response.status_code == 422
 
 
+def test_mteam_validation_error_does_not_echo_oversized_cookie(client) -> None:
+    _login(client)
+    sensitive_cookie = "unique-cookie-secret-" + "x" * 16_384
+
+    response = client.put(
+        "/api/settings/mteam",
+        json={
+            "base_url": "https://m-team.test",
+            "headers": {},
+            "cookie": sensitive_cookie,
+            "user_agent": "agent",
+            "timeout": 15,
+        },
+    )
+
+    assert response.status_code == 422
+    assert "unique-cookie-secret" not in response.text
+
+
+def test_mteam_validation_error_does_not_echo_invalid_header_value(client) -> None:
+    _login(client)
+    sensitive_header = 987_654_321
+
+    response = client.put(
+        "/api/settings/mteam",
+        json={
+            "base_url": "https://m-team.test",
+            "headers": {"x-api-key": sensitive_header},
+            "cookie": None,
+            "user_agent": "agent",
+            "timeout": 15,
+        },
+    )
+
+    assert response.status_code == 422
+    assert str(sensitive_header) not in response.text
+
+
 def test_empty_cookie_and_missing_header_delete_saved_values(client, monkeypatch) -> None:
     _login(client)
     client.put(

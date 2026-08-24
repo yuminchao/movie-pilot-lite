@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request, status
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -93,8 +94,30 @@ def create_app(
             content={"detail": str(error)},
         )
 
+    async def request_validation_error_handler(
+        _: Request,
+        error: RequestValidationError,
+    ) -> JSONResponse:
+        """返回不包含请求原值和校验上下文的 422 响应。"""
+        detail = [
+            {
+                "type": item["type"],
+                "loc": item["loc"],
+                "msg": item["msg"],
+            }
+            for item in error.errors()
+        ]
+        return JSONResponse(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            content={"detail": detail},
+        )
+
     application.add_exception_handler(IntegrationError, integration_error_handler)
     application.add_exception_handler(QbittorrentError, integration_error_handler)
+    application.add_exception_handler(
+        RequestValidationError,
+        request_validation_error_handler,
+    )
 
     @application.get("/api/health")
     def health() -> dict[str, str]:
