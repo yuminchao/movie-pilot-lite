@@ -5,6 +5,7 @@ from sqlalchemy import engine_from_config, pool
 
 from app.db.base import Base
 from app.db import models  # noqa: F401
+from app.db.session import ensure_database
 
 config = context.config
 if database_url := os.getenv("DATABASE_URL"):
@@ -19,6 +20,9 @@ def run_migrations_offline() -> None:
 
 
 def run_migrations_online() -> None:
+    url = config.get_main_option("sqlalchemy.url")
+    if url:
+        ensure_database(url)
     connectable = engine_from_config(config.get_section(config.config_ini_section), prefix="sqlalchemy.", poolclass=pool.NullPool)
     with connectable.connect() as connection:
         context.configure(connection=connection, target_metadata=target_metadata)

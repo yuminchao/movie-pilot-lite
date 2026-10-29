@@ -1,4 +1,4 @@
-export type Category = 'all' | 'movie' | 'tv' | 'music'
+export type Category = 'all' | 'movie' | 'tv' | 'documentary' | 'anime' | 'music' | 'game' | 'other' | 'adult'
 export type SearchSort = 'promotion' | 'seeders' | 'newest'
 
 export interface AuthStatus {
@@ -21,6 +21,8 @@ export interface SearchItem {
   page_url: string
   poster_url: string | null
   labels: string[]
+  audio_languages: string[]
+  audio_tracks: number
 }
 
 export interface SearchPageData {
@@ -82,4 +84,38 @@ export interface DownloadDefaults {
   category: string
   save_paths: DownloadPaths
   start: boolean
+}
+
+export type VideoTaskStatus = 'queued' | 'running' | 'done' | 'failed' | 'canceled'
+export type VideoGrabMode = 'auto' | 'url' | 'mse'
+
+export interface VideoTask {
+  id: string
+  url: string
+  name: string
+  mode: VideoGrabMode | ''
+  status: VideoTaskStatus
+  progress: string
+  title: string
+  file: string
+  size: number
+  error: string
+  attempts: number
+  log: string[]
+  createdAt: string
+  startedAt: string | null
+  finishedAt: string | null
+}
+
+export interface VideoGrabSettings {
+  saveDir: string
+  proxy: string
+  concurrency: number
+  wait: number
+  maxDuration: number
+  mode: VideoGrabMode
+  cookie: string
+  retries: number
+  /** 只读：服务端保存根目录（容器内路径） */
+  root?: string
 }

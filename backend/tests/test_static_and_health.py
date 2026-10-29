@@ -18,9 +18,9 @@ def test_health_is_public_and_frontend_fallback_is_served(tmp_path: Path) -> Non
     )
 
     with TestClient(app) as client:
-        assert client.get("/api/health").json() == {"status": "ok"}
-        assert "movie-pilot-lite" in client.get("/").text
-        assert "movie-pilot-lite" in client.get("/settings").text
+        assert client.get("/mpl/api/health").json() == {"status": "ok"}
+        assert "movie-pilot-lite" in client.get("/mpl/").text
+        assert "movie-pilot-lite" in client.get("/mpl/settings").text
 
 
 def test_unknown_api_path_does_not_return_frontend(tmp_path: Path) -> None:
@@ -31,4 +31,4 @@ def test_unknown_api_path_does_not_return_frontend(tmp_path: Path) -> None:
     with TestClient(
         create_app(f"sqlite:///{tmp_path / 'test.db'}", frontend_dir=frontend)
     ) as client:
-        assert client.get("/api/unknown").status_code == 404
+        assert client.get("/mpl/api/unknown").status_code == 404

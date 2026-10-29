@@ -6,12 +6,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { App } from './App'
 import { SearchPage } from './features/search/SearchPage'
 import { SettingsPage } from './features/settings/SettingsPage'
+import { VideoPage } from './features/video/VideoPage'
 import { api, ApiError } from './lib/api'
 import type { MTeamCheckinSettings } from './lib/types'
 
 describe('App', () => {
   beforeEach(() => {
     vi.restoreAllMocks()
+    // 应用挂载在 /mpl 前缀下，测试环境需与 BrowserRouter basename 匹配。
+    window.history.pushState({}, '', '/mpl/')
   })
 
   afterEach(() => {
@@ -56,7 +59,7 @@ describe('App', () => {
                 upload_factor: 1,
                 created_at: '2026-08-23T10:00:00Z',
                 page_url: 'https://m-team.test/detail/7',
-                labels: ['国语', '中字'],
+                labels: ['中配', '中字'], audio_languages: ['国语', '粤语'], audio_tracks: 2,
               },
             ],
             page: 1,
@@ -116,7 +119,7 @@ describe('App', () => {
               created_at: null,
               page_url: 'https://m-team.test/detail/poster',
               poster_url: 'https://images.m-team.test/poster.jpg',
-              labels: [],
+              labels: [], audio_languages: [], audio_tracks: 0,
             }],
             page: 1,
             has_more: false,
@@ -157,13 +160,13 @@ describe('App', () => {
               {
                 source_token: 'source-missing', title: '缺失海报', description: '', category: 'movie', size: 1,
                 seeders: 1, leechers: 0, downloads: 0, download_factor: 1, upload_factor: 1,
-                created_at: null, page_url: 'https://m-team.test/detail/missing', poster_url: null, labels: [],
+                created_at: null, page_url: 'https://m-team.test/detail/missing', poster_url: null, labels: [], audio_languages: [], audio_tracks: 0,
               },
               {
                 source_token: 'source-failed', title: '失败海报', description: '', category: 'movie', size: 1,
                 seeders: 1, leechers: 0, downloads: 0, download_factor: 1, upload_factor: 1,
                 created_at: null, page_url: 'https://m-team.test/detail/failed',
-                poster_url: 'https://images.m-team.test/failed.jpg', labels: [],
+                poster_url: 'https://images.m-team.test/failed.jpg', labels: [], audio_languages: [], audio_tracks: 0,
               },
             ],
             page: 1,
@@ -206,7 +209,7 @@ describe('App', () => {
           source_token: 'source-changing', title: '换源海报', description: '', category: 'movie', size: 1,
           seeders: 1, leechers: 0, downloads: 0, download_factor: 1, upload_factor: 1,
           created_at: null, page_url: 'https://m-team.test/detail/changing',
-          poster_url: `https://images.m-team.test/poster-${searchCount}.jpg`, labels: [],
+          poster_url: `https://images.m-team.test/poster-${searchCount}.jpg`, labels: [], audio_languages: [], audio_tracks: 0,
         }],
         page: 1,
         has_more: false,
@@ -226,6 +229,43 @@ describe('App', () => {
       'src',
       'https://images.m-team.test/poster-2.jpg',
     )
+  })
+
+  it('shows audio language tags and filters results by language', async () => {
+    const base = {
+      description: '1080p', category: 'movie', size: 1, seeders: 10, leechers: 0, downloads: 0,
+      download_factor: 1, upload_factor: 1, created_at: null, page_url: 'https://m-team.test/detail/1', poster_url: null,
+    }
+    vi.spyOn(api, 'get').mockImplementation((path) =>
+      path === '/api/settings/downloads'
+        ? Promise.reject(new Error('defaults unavailable'))
+        : Promise.resolve({
+            items: [
+              { ...base, source_token: 'zh', title: '国语版', labels: ['中配', '中字'], audio_languages: ['国语', '粤语'], audio_tracks: 2 },
+              { ...base, source_token: 'en', title: '英语版', labels: [], audio_languages: ['英语'], audio_tracks: 0 },
+            ],
+            page: 1,
+            has_more: false,
+          }),
+    )
+    const user = userEvent.setup()
+    render(<SearchPage />)
+
+    await user.type(screen.getByRole('searchbox'), '版')
+    await user.click(screen.getByRole('button', { name: '搜索' }))
+    const zhRow = (await screen.findByText('国语版')).closest('.result-row') as HTMLElement
+    const tags = within(zhRow).getByLabelText('语言与标签')
+    expect(within(tags).getByText('国语')).toHaveClass('language')
+    expect(within(tags).getByText('粤语')).toBeInTheDocument()
+    expect(within(tags).getByText('2 音轨')).toBeInTheDocument()
+    expect(within(tags).getByText('中字')).toBeInTheDocument()
+    expect(within(tags).queryByText('中配')).not.toBeInTheDocument()
+
+    await user.selectOptions(screen.getByLabelText('语言'), '英语')
+
+    expect(screen.queryByText('国语版')).not.toBeInTheDocument()
+    expect(screen.getByText('英语版')).toBeInTheDocument()
+    expect(screen.getByText('1 条结果')).toBeInTheDocument()
   })
 
   it('uses the other path for a result with category all', async () => {
@@ -255,7 +295,7 @@ describe('App', () => {
               upload_factor: 1,
               created_at: null,
               page_url: 'https://m-team.test/detail/other',
-              labels: [],
+              labels: [], audio_languages: [], audio_tracks: 0,
             }],
             page: 1,
             has_more: false,
@@ -936,5 +976,28 @@ describe('App', () => {
     render(<SettingsPage />)
 
     expect(await screen.findByText('尚未执行')).toBeInTheDocument()
+  })
+
+  it('lists video tasks and submits new page urls', async () => {
+    const task = {
+      id: 'abc', url: 'https://v.test/1', name: '', mode: '', status: 'done', progress: '完成', title: '示例',
+      file: 'video/示例.mp4', size: 5_242_880, error: '', attempts: 1, log: ['[grab] ok'],
+      createdAt: '2026-10-29T10:00:00Z', startedAt: null, finishedAt: null,
+    }
+    vi.spyOn(api, 'get').mockResolvedValue([task])
+    const post = vi.spyOn(api, 'post').mockResolvedValue([{ ...task, id: 'n1' }, { ...task, id: 'n2' }])
+    const user = userEvent.setup()
+    render(<VideoPage />)
+
+    expect(await screen.findByText('示例.mp4')).toBeInTheDocument()
+    expect(screen.getByText('5.0 MB', { exact: false })).toBeInTheDocument()
+    expect(screen.getByTitle('下载到本机')).toHaveAttribute('href', '/mpl/api/video/tasks/abc/file')
+
+    await user.type(screen.getByLabelText('网页地址'), 'https://v.test/2\nhttps://v.test/3')
+    expect(screen.getByLabelText('文件名')).toBeDisabled()
+    await user.click(screen.getByRole('button', { name: /开始下载（2 个）/ }))
+
+    expect(post).toHaveBeenCalledWith('/api/video/tasks', { urls: ['https://v.test/2', 'https://v.test/3'], name: undefined, mode: undefined })
+    expect(await screen.findByText('已加入 2 个任务')).toBeInTheDocument()
   })
 })

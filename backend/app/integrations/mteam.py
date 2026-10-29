@@ -3,9 +3,28 @@ from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 
-_MOVIE_CATEGORIES = ["401", "419", "420", "421", "439", "405", "404"]
-_TV_CATEGORIES = ["403", "402", "435", "438", "404", "405"]
-_MUSIC_CATEGORIES = ["434", "406"]
+from app.integrations.release_languages import detect_audio_languages, detect_audio_track_count
+
+# M-Team 一级分类 → 子分类 id（见 /api/torrent/categoryList）；成人区需以 adult 模式搜索
+_CATEGORY_IDS: dict[str, list[str]] = {
+    "movie": ["401", "419", "420", "421", "439"],
+    "tv": ["403", "402", "435", "438"],
+    "documentary": ["404"],
+    "anime": ["405", "453"],
+    "music": ["434", "406"],
+    "game": ["423", "448"],
+    "other": ["407", "409", "422", "427", "442", "451"],
+    "adult": [
+        "410", "424", "431", "437",
+        "426", "429", "430", "432", "436", "440",
+        "425", "433",
+        "411", "412", "413",
+    ],
+}
+_ADULT_CATEGORY = "adult"
+_CATEGORY_BY_ID = {
+    category_id: name for name, category_ids in _CATEGORY_IDS.items() for category_id in category_ids
+}
 
 
 class IntegrationError(RuntimeError):
@@ -30,6 +49,8 @@ class SearchResult:
     page_url: str
     labels: tuple[str, ...]
     poster_url: str | None = None
+    audio_languages: tuple[str, ...] = ()
+    audio_tracks: int = 0
 
 
 class MTeamClient:
@@ -78,10 +99,10 @@ class MTeamClient:
         Raises:
             IntegrationError: 网络、响应状态或响应结构无效。
         """
-        categories = self._categories_for(category)
         payload = {
+            "mode": "adult" if category == _ADULT_CATEGORY else "normal",
             "keyword": keyword,
-            "categories": categories,
+            "categories": _CATEGORY_IDS.get(category, []),
             "pageNumber": page,
             "pageSize": 100,
             "visible": 1,
@@ -192,12 +213,16 @@ class MTeamClient:
         category = self._category_name(raw_category)
         labels = item.get("labelsNew") or []
         if not labels and item.get("labels"):
-            labels = str(item["labels"]).split()
+            # 旧字段 labels 常是数字位掩码（如 "0"），不是可展示的标签
+            labels = [label for label in str(item["labels"]).split() if not label.isdigit()]
         discount = status.get("discount")
+        title = str(item.get("name") or "")
+        description = str(item.get("smallDescr") or "")
+        normalized_labels = tuple(str(label) for label in labels)
         return SearchResult(
             source_id=str(item.get("id") or ""),
-            title=str(item.get("name") or ""),
-            description=str(item.get("smallDescr") or ""),
+            title=title,
+            description=description,
             category=category,
             size=int(item.get("size") or 0),
             seeders=int(status.get("seeders") or 0),
@@ -207,8 +232,10 @@ class MTeamClient:
             upload_factor=self._upload_factor(discount),
             created_at=item.get("createdDate"),
             page_url=f"{self._site_url}/detail/{item.get('id')}",
-            labels=tuple(str(label) for label in labels),
+            labels=normalized_labels,
             poster_url=self._poster_url(item.get("imageList")),
+            audio_languages=detect_audio_languages(title, description, normalized_labels),
+            audio_tracks=detect_audio_track_count(title),
         )
 
     @staticmethod
@@ -260,23 +287,8 @@ class MTeamClient:
         return urlunsplit((parsed.scheme, host, "", "", ""))
 
     @staticmethod
-    def _categories_for(category: str) -> list[str]:
-        return {
-            "movie": _MOVIE_CATEGORIES,
-            "tv": _TV_CATEGORIES,
-            "music": _MUSIC_CATEGORIES,
-            "all": [],
-        }.get(category, [])
-
-    @staticmethod
     def _category_name(category: str) -> str:
-        if category in _MUSIC_CATEGORIES:
-            return "music"
-        if category in _TV_CATEGORIES and category not in _MOVIE_CATEGORIES:
-            return "tv"
-        if category in _MOVIE_CATEGORIES:
-            return "movie"
-        return "all"
+        return _CATEGORY_BY_ID.get(category, "other")
 
     @staticmethod
     def _download_factor(discount: str | None) -> float:

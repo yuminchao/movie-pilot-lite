@@ -11,7 +11,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api import auth, downloads, search, settings
+from app.api import auth, downloads, search, settings, video
 from app.auth.session import AuthService
 from app.config.repository import ConfigKey, ConfigRepository
 from app.config.vault import SecretVault
@@ -219,10 +219,10 @@ def create_app(
             凭据端点返回移除原始输入的错误；其他端点返回 FastAPI 默认错误。
         """
         if request.url.path not in {
-            "/api/auth/login",
-            "/api/auth/setup",
-            "/api/settings/mteam",
-            "/api/settings/qbittorrent",
+            "/mpl/api/auth/login",
+            "/mpl/api/auth/setup",
+            "/mpl/api/settings/mteam",
+            "/mpl/api/settings/qbittorrent",
         }:
             return await request_validation_exception_handler(request, error)
         detail = [
@@ -245,7 +245,7 @@ def create_app(
         request_validation_error_handler,
     )
 
-    @application.get("/api/health")
+    @application.get("/mpl/api/health")
     def health() -> dict[str, str]:
         """返回不依赖外部服务的进程健康状态。
 
@@ -254,24 +254,25 @@ def create_app(
         """
         return {"status": "ok"}
 
-    application.include_router(auth.router)
-    application.include_router(search.router)
-    application.include_router(downloads.router)
-    application.include_router(settings.router)
+    application.include_router(auth.router, prefix="/mpl")
+    application.include_router(search.router, prefix="/mpl")
+    application.include_router(downloads.router, prefix="/mpl")
+    application.include_router(settings.router, prefix="/mpl")
+    application.include_router(video.router, prefix="/mpl")
 
     static_root = frontend_dir or Path(__file__).resolve().parents[2] / "frontend" / "dist"
     index_file = static_root / "index.html"
     assets_dir = static_root / "assets"
     if assets_dir.is_dir():
-        application.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
+        application.mount("/mpl/assets", StaticFiles(directory=assets_dir), name="assets")
     if index_file.is_file():
 
-        @application.get("/{path:path}", include_in_schema=False)
+        @application.get("/mpl/{path:path}", include_in_schema=False)
         def frontend_fallback(path: str) -> FileResponse:
             """为非 API 前端路由返回静态文件或 Vite 入口文件。
 
             Args:
-                path: 请求的应用内相对路径。
+                path: 请求的应用内相对路径（相对 /mpl 前缀）。
 
             Returns:
                 匹配的静态文件或单页应用入口文件。

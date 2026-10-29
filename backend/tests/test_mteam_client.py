@@ -26,8 +26,9 @@ def test_search_maps_movie_result(mteam_client: MTeamClient, httpx_mock) -> None
                     {
                         "id": "7",
                         "name": "Movie",
-                        "smallDescr": "description",
+                        "smallDescr": "description [国粤双语]",
                         "category": "401",
+                        "labelsNew": ["中字"],
                         "size": 1000,
                         "imageList": [
                             "http://images.m-team.test/insecure.jpg",
@@ -55,6 +56,8 @@ def test_search_maps_movie_result(mteam_client: MTeamClient, httpx_mock) -> None
     assert result.download_factor == 0
     assert result.seeders == 8
     assert result.poster_url == "https://images.m-team.test/poster.jpg"
+    assert result.audio_languages == ("国语", "粤语")
+    assert result.labels == ("中字",)
     request = httpx_mock.get_request()
     assert request.headers["x-api-key"] == "secret"
     assert request.headers["Cookie"] == "tp=secret"
@@ -107,7 +110,37 @@ def test_search_uses_tv_categories(mteam_client: MTeamClient, httpx_mock) -> Non
     request = httpx_mock.get_request()
     payload = json.loads(request.content)
     assert payload["pageNumber"] == 2
-    assert payload["categories"] == ["403", "402", "435", "438", "404", "405"]
+    assert payload["categories"] == ["403", "402", "435", "438"]
+    assert payload["mode"] == "normal"
+
+
+def test_search_adult_category_uses_adult_mode(mteam_client: MTeamClient, httpx_mock) -> None:
+    httpx_mock.add_response(
+        method="POST",
+        url="https://api.m-team.test/api/torrent/search",
+        json={"data": {"data": [{"id": "9", "name": "X", "category": "410", "status": {}}]}},
+    )
+
+    result = mteam_client.search("X", "adult", 1)[0]
+
+    payload = json.loads(httpx_mock.get_request().content)
+    assert payload["mode"] == "adult"
+    assert "410" in payload["categories"]
+    assert result.category == "adult"
+
+
+@pytest.mark.parametrize(
+    ("raw_category", "expected"),
+    [("404", "documentary"), ("453", "anime"), ("423", "game"), ("427", "other"), ("999", "other")],
+)
+def test_search_maps_result_category(mteam_client: MTeamClient, httpx_mock, raw_category: str, expected: str) -> None:
+    httpx_mock.add_response(
+        method="POST",
+        url="https://api.m-team.test/api/torrent/search",
+        json={"data": {"data": [{"id": "9", "name": "X", "category": raw_category, "status": {}}]}},
+    )
+
+    assert mteam_client.search("X", "all", 1)[0].category == expected
 
 
 def test_non_success_response_raises_integration_error(

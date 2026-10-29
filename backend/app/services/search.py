@@ -22,6 +22,8 @@ class SearchItem:
     page_url: str
     poster_url: str | None
     labels: tuple[str, ...]
+    audio_languages: tuple[str, ...]
+    audio_tracks: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,6 +58,8 @@ class SearchPage:
                 page_url=result.page_url,
                 poster_url=result.poster_url,
                 labels=result.labels,
+                audio_languages=result.audio_languages,
+                audio_tracks=result.audio_tracks,
             )
             for result in results
         )

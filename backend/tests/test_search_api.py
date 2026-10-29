@@ -26,13 +26,13 @@ class SearchServiceStub:
 
 
 def _login(client) -> None:
-    client.post("/api/auth/setup", json={"password": "correct horse battery"})
-    response = client.post("/api/auth/login", json={"password": "correct horse battery"})
+    client.post("/mpl/api/auth/setup", json={"password": "correct horse battery"})
+    response = client.post("/mpl/api/auth/login", json={"password": "correct horse battery"})
     assert response.status_code == 204
 
 
 def test_search_requires_session(client) -> None:
-    response = client.get("/api/search", params={"q": "Movie"})
+    response = client.get("/mpl/api/search", params={"q": "Movie"})
 
     assert response.status_code == 401
 
@@ -42,7 +42,7 @@ def test_search_returns_normalized_page_without_credentials(client) -> None:
     client.app.dependency_overrides[get_search_service] = lambda: SearchServiceStub()
 
     response = client.get(
-        "/api/search",
+        "/mpl/api/search",
         params={
             "q": "Movie",
             "category": "movie",
@@ -65,8 +65,8 @@ def test_search_rejects_unknown_category(client) -> None:
     client.app.dependency_overrides[get_search_service] = lambda: SearchServiceStub()
 
     response = client.get(
-        "/api/search",
-        params={"q": "Movie", "category": "software"},
+        "/mpl/api/search",
+        params={"q": "Movie", "category": "ebook"},
     )
 
     assert response.status_code == 422
@@ -75,7 +75,7 @@ def test_search_rejects_unknown_category(client) -> None:
 def test_saved_mteam_settings_power_search(client, httpx_mock) -> None:
     _login(client)
     client.put(
-        "/api/settings/mteam",
+        "/mpl/api/settings/mteam",
         json={
             "base_url": "https://m-team.test",
             "headers": {"x-api-key": "stored-secret"},
@@ -88,7 +88,7 @@ def test_saved_mteam_settings_power_search(client, httpx_mock) -> None:
         json={"data": {"data": []}},
     )
 
-    response = client.get("/api/search", params={"q": "Movie"})
+    response = client.get("/mpl/api/search", params={"q": "Movie"})
 
     assert response.status_code == 200
     request = httpx_mock.get_request()
@@ -104,7 +104,7 @@ def test_integration_failure_returns_sanitized_bad_gateway(client) -> None:
     _login(client)
     client.app.dependency_overrides[get_search_service] = lambda: FailingService()
 
-    response = client.get("/api/search", params={"q": "Movie"})
+    response = client.get("/mpl/api/search", params={"q": "Movie"})
 
     assert response.status_code == 502
     assert response.json() == {"detail": "M-Team 搜索失败"}

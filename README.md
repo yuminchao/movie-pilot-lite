@@ -17,19 +17,39 @@
 
 ## Docker Compose 部署
 
-要求安装 Docker Engine 和 Docker Compose v2。
+要求安装 Docker Engine 和 Docker Compose v2，并准备一个可访问的 MySQL 8 实例（本仓库示例使用宿主机 3306 端口的 MySQL）。
 
 ```bash
 git clone <repository-url> movie-pilot-lite
 cd movie-pilot-lite
 cp .env.example .env
-mkdir -p data
+# 编辑 .env：把 DATABASE_URL 中的密码改成你的 MySQL root 密码
 docker compose up --build -d
 ```
 
-打开 `http://localhost:8000`，首次访问时创建管理员密码，然后进入设置页配置第三方连接。
+打开 `http://localhost:8000/mpl/`，首次访问时创建管理员密码，然后进入设置页配置第三方连接。
 
-如 Linux 主机上的 bind mount 无写入权限，请让 UID `10001` 可以写入数据目录：
+## 反向代理（/data/nginx）
+
+所有页面与接口统一挂在 `/mpl` 前缀下（前端路由、静态资源、`/mpl/api/*` 接口），适合通过反向代理与其他服务共存。示例（宿主机 nginx，`/data/nginx/nginx.conf`）：
+
+```nginx
+location /mpl/ {
+    proxy_pass http://127.0.0.1:8000;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+```
+
+`proxy_pass` 不带 URI（结尾无 `/`），保留 `/mpl/` 前缀原样转发给应用。修改后执行 `docker exec nginx-custom nginx -s reload`。
+
+数据库连接说明：
+
+- 应用首次启动或 Alembic 迁移时会自动创建 `movie_pilot_lite` 数据库（utf8mb4），无需手动 `CREATE DATABASE`。
+- Docker Compose 部署时，容器通过 `host.docker.internal` 访问宿主机 MySQL（compose 已配置 `extra_hosts`）；MySQL 必须监听 `0.0.0.0:3306` 且已发布到宿主机。
+- 如 Linux 主机上的 bind mount 无写入权限，请让 UID `10001` 可以写入数据目录：
 
 ```bash
 sudo chown -R 10001:10001 data
@@ -44,7 +64,7 @@ docker compose restart movie-pilot-lite
 docker compose down
 ```
 
-SQLite 数据库保存在宿主机 `./data/movie-pilot-lite.db`。删除容器不会删除该目录。
+应用数据（管理员账户、会话、加密配置、下载记录）保存在 MySQL 的 `movie_pilot_lite` 数据库，删除容器不会删除数据库。
 
 ## M-Team 配置
 
@@ -121,9 +141,10 @@ Docker Compose 中的地址必须是 movie-pilot-lite 容器可以访问的地�
 
 ## 本地开发
 
-后端要求 Python 3.12 和 uv：
+后端要求 Python 3.12、uv 和本机可访问的 MySQL：
 
 ```bash
+export DATABASE_URL='mysql+pymysql://root:密码@127.0.0.1:3306/movie_pilot_lite?charset=utf8mb4'
 uv sync --frozen
 uv run uvicorn app.main:app --app-dir backend --reload
 ```

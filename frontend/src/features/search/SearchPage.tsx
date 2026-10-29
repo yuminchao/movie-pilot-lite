@@ -5,12 +5,20 @@ import { api, ApiError } from '../../lib/api'
 import type { Category, DownloadDefaults, SearchItem, SearchPageData, SearchSort } from '../../lib/types'
 import { Poster } from './Poster'
 
+// 对应 M-Team 一级分类；「全部」不含成人区，成人区需单独搜索
 const categories: Array<{ value: Category; label: string }> = [
   { value: 'all', label: '全部' },
   { value: 'movie', label: '电影' },
-  { value: 'tv', label: '电视剧' },
+  { value: 'tv', label: '剧集/综艺' },
+  { value: 'documentary', label: '纪录' },
+  { value: 'anime', label: '动漫' },
   { value: 'music', label: '音乐' },
+  { value: 'game', label: '游戏' },
+  { value: 'other', label: '其他' },
+  { value: 'adult', label: '成人' },
 ]
+
+const categoryLabels = Object.fromEntries(categories.map((item) => [item.value, item.label])) as Record<Category, string>
 
 export function SearchPage() {
   const [query, setQuery] = useState('')
@@ -18,6 +26,7 @@ export function SearchPage() {
   const [sort, setSort] = useState<SearchSort>('promotion')
   const [promotionOnly, setPromotionOnly] = useState(false)
   const [minimumSeeders, setMinimumSeeders] = useState(0)
+  const [language, setLanguage] = useState('')
   const [data, setData] = useState<SearchPageData | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -41,12 +50,20 @@ export function SearchPage() {
       .catch(() => undefined)
   }, [])
 
+  const languageOptions = useMemo(
+    () => Array.from(new Set((data?.items ?? []).flatMap((item) => item.audio_languages))),
+    [data],
+  )
+
   const visibleItems = useMemo(
     () =>
       (data?.items ?? []).filter(
-        (item) => item.seeders >= minimumSeeders && (!promotionOnly || item.download_factor < 1),
+        (item) =>
+          item.seeders >= minimumSeeders &&
+          (!promotionOnly || item.download_factor < 1) &&
+          (!language || item.audio_languages.includes(language)),
       ),
-    [data, minimumSeeders, promotionOnly],
+    [data, minimumSeeders, promotionOnly, language],
   )
 
   async function runSearch(page = 1) {
@@ -106,6 +123,7 @@ export function SearchPage() {
         <div className="filters">
           <label><input type="checkbox" checked={promotionOnly} onChange={(event) => setPromotionOnly(event.target.checked)} />仅促销</label>
           <label>最小做种<input className="compact-input" type="number" min="0" value={minimumSeeders} onChange={(event) => setMinimumSeeders(Number(event.target.value))} /></label>
+          <label>语言<select value={language} onChange={(event) => setLanguage(event.target.value)}><option value="">全部</option>{languageOptions.map((value) => <option key={value} value={value}>{value}</option>)}{language && !languageOptions.includes(language) ? <option value={language}>{language}</option> : null}</select></label>
           <label>排序<select value={sort} onChange={(event) => setSort(event.target.value as SearchSort)}><option value="promotion">免费优先</option><option value="seeders">做种最多</option><option value="newest">最新发布</option></select></label>
         </div>
       </div>
@@ -132,7 +150,7 @@ export function SearchPage() {
           ))}
         </div>
         {data && visibleItems.length === 0 ? <div className="empty-state"><Search size={28} /><strong>没有符合筛选条件的资源</strong><span>调整垂类、促销或做种数后重试</span></div> : null}
-        {!data ? <div className="empty-state"><Search size={28} /><strong>输入关键词开始搜索</strong><span>支持电影、电视剧、音乐和 IMDb ID</span></div> : null}
+        {!data ? <div className="empty-state"><Search size={28} /><strong>输入关键词开始搜索</strong><span>支持电影、剧集、纪录、动漫、音乐、游戏等 M-Team 分类和 IMDb ID</span></div> : null}
         {data ? (
           <div className="pagination">
             <button type="button" className="icon-button" disabled={data.page <= 1} onClick={() => runSearch(data.page - 1)} title="上一页"><ChevronLeft size={18} /></button>
@@ -179,7 +197,7 @@ function ResultRow({ item, expanded, onToggle, onSuccess, defaults }: { item: Se
       <div className="result-row" role="row">
         <button className="result-title" type="button" onClick={onToggle} aria-expanded={expanded}>
           <Poster src={item.poster_url} title={item.title} size="thumb" />
-          <span className="result-title-copy"><strong>{item.title}</strong><small>{item.category === 'tv' ? '电视剧' : item.category === 'music' ? '音乐' : '电影'} · {item.description || item.labels.join(' · ')}</small></span>
+          <span className="result-title-copy"><strong>{item.title}</strong><small>{categoryLabels[item.category]} · {item.description || item.labels.join(' · ')}</small><ReleaseTags item={item} /></span>
           <ChevronDown className="result-chevron" size={17} />
         </button>
         <span data-label="大小">{formatBytes(item.size)}</span>
@@ -199,6 +217,18 @@ function ResultRow({ item, expanded, onToggle, onSuccess, defaults }: { item: Se
         </div>
       ) : null}
     </div>
+  )
+}
+
+function ReleaseTags({ item }: { item: SearchItem }) {
+  const labels = item.labels.filter((label) => label !== '中配')
+  if (!item.audio_languages.length && !labels.length && item.audio_tracks < 2) return null
+  return (
+    <span className="release-tags" aria-label="语言与标签">
+      {item.audio_languages.map((value) => <span key={value} className="tag language">{value}</span>)}
+      {item.audio_tracks > 1 ? <span className="tag">{item.audio_tracks} 音轨</span> : null}
+      {labels.map((value) => <span key={value} className="tag">{value}</span>)}
+    </span>
   )
 }
 

@@ -9,3 +9,7 @@ frontend/vite.config.js
 frontend/vite.config.d.ts
 data/
 .env
+
+# 已停用的 *arr 套件（含索引器密钥与下载数据），不入库
+arr/
+.codegraph/

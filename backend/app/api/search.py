@@ -19,7 +19,9 @@ def get_search_service() -> SearchService:
 @router.get("/search")
 def search(
     q: str = Query(min_length=1, max_length=200),
-    category: Literal["all", "movie", "tv", "music"] = "all",
+    category: Literal[
+        "all", "movie", "tv", "documentary", "anime", "music", "game", "other", "adult"
+    ] = "all",
     page: int = Query(default=1, ge=1),
     sort: Literal["promotion", "seeders", "newest"] = "promotion",
     _: str = Depends(require_session),

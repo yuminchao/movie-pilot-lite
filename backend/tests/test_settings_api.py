@@ -11,14 +11,14 @@ MASKED_VALUE = "••••••••"
 
 
 def _login(client) -> None:
-    client.post("/api/auth/setup", json={"password": "correct horse battery"})
-    response = client.post("/api/auth/login", json={"password": "correct horse battery"})
+    client.post("/mpl/api/auth/setup", json={"password": "correct horse battery"})
+    response = client.post("/mpl/api/auth/login", json={"password": "correct horse battery"})
     assert response.status_code == 204
 
 
 def test_settings_require_session(client) -> None:
     response = client.put(
-        "/api/settings/mteam",
+        "/mpl/api/settings/mteam",
         json={
             "base_url": "https://m-team.test",
             "headers": {"x-api-key": "secret"},
@@ -33,7 +33,7 @@ def test_mteam_settings_are_encrypted_and_masked(client) -> None:
     _login(client)
 
     saved = client.put(
-        "/api/settings/mteam",
+        "/mpl/api/settings/mteam",
         json={
             "base_url": "https://m-team.test",
             "headers": {"x-api-key": "secret"},
@@ -42,7 +42,7 @@ def test_mteam_settings_are_encrypted_and_masked(client) -> None:
             "timeout": 15,
         },
     )
-    loaded = client.get("/api/settings/mteam")
+    loaded = client.get("/mpl/api/settings/mteam")
 
     assert saved.status_code == 200
     assert loaded.status_code == 200
@@ -63,7 +63,7 @@ def test_mteam_settings_are_encrypted_and_masked(client) -> None:
 def test_unconfigured_mteam_settings_return_safe_defaults(client) -> None:
     _login(client)
 
-    response = client.get("/api/settings/mteam")
+    response = client.get("/mpl/api/settings/mteam")
 
     assert response.status_code == 200
     assert response.json() == {
@@ -81,7 +81,7 @@ def test_unconfigured_mteam_settings_return_safe_defaults(client) -> None:
 def test_masked_mteam_values_preserve_saved_secrets(client, monkeypatch) -> None:
     _login(client)
     client.put(
-        "/api/settings/mteam",
+        "/mpl/api/settings/mteam",
         json={
             "base_url": "https://m-team.test/",
             "headers": {"x-api-key": "api-secret", "x-extra": "remove-me"},
@@ -91,7 +91,7 @@ def test_masked_mteam_values_preserve_saved_secrets(client, monkeypatch) -> None
         },
     )
     saved = client.put(
-        "/api/settings/mteam",
+        "/mpl/api/settings/mteam",
         json={
             "base_url": "https://m-team.test/",
             "headers": {"x-api-key": MASKED_VALUE},
@@ -103,7 +103,7 @@ def test_masked_mteam_values_preserve_saved_secrets(client, monkeypatch) -> None
     mteam_client = Mock()
     monkeypatch.setattr(settings_module, "MTeamClient", mteam_client)
 
-    tested = client.post("/api/settings/mteam/test")
+    tested = client.post("/mpl/api/settings/mteam/test")
 
     assert saved.status_code == 200
     assert saved.json()["headers"] == {"x-api-key": MASKED_VALUE}
@@ -122,7 +122,7 @@ def test_first_mteam_save_rejects_masked_secrets(client) -> None:
     _login(client)
 
     header_response = client.put(
-        "/api/settings/mteam",
+        "/mpl/api/settings/mteam",
         json={
             "base_url": "https://m-team.test",
             "headers": {"x-api-key": MASKED_VALUE},
@@ -132,7 +132,7 @@ def test_first_mteam_save_rejects_masked_secrets(client) -> None:
         },
     )
     cookie_response = client.put(
-        "/api/settings/mteam",
+        "/mpl/api/settings/mteam",
         json={
             "base_url": "https://m-team.test",
             "headers": {},
@@ -151,7 +151,7 @@ def test_mteam_validation_error_does_not_echo_oversized_cookie(client) -> None:
     sensitive_cookie = "unique-cookie-secret-" + "x" * 16_384
 
     response = client.put(
-        "/api/settings/mteam",
+        "/mpl/api/settings/mteam",
         json={
             "base_url": "https://m-team.test",
             "headers": {},
@@ -170,7 +170,7 @@ def test_mteam_validation_error_does_not_echo_invalid_header_value(client) -> No
     sensitive_header = 987_654_321
 
     response = client.put(
-        "/api/settings/mteam",
+        "/mpl/api/settings/mteam",
         json={
             "base_url": "https://m-team.test",
             "headers": {"x-api-key": sensitive_header},
@@ -187,7 +187,7 @@ def test_mteam_validation_error_does_not_echo_invalid_header_value(client) -> No
 def test_empty_cookie_and_missing_header_delete_saved_values(client, monkeypatch) -> None:
     _login(client)
     client.put(
-        "/api/settings/mteam",
+        "/mpl/api/settings/mteam",
         json={
             "base_url": "https://m-team.test",
             "headers": {"x-api-key": "secret", "x-extra": "extra"},
@@ -197,7 +197,7 @@ def test_empty_cookie_and_missing_header_delete_saved_values(client, monkeypatch
         },
     )
     saved = client.put(
-        "/api/settings/mteam",
+        "/mpl/api/settings/mteam",
         json={
             "base_url": "https://m-team.test",
             "headers": {"x-api-key": MASKED_VALUE},
@@ -209,7 +209,7 @@ def test_empty_cookie_and_missing_header_delete_saved_values(client, monkeypatch
     mteam_client = Mock()
     monkeypatch.setattr(settings_module, "MTeamClient", mteam_client)
 
-    tested = client.post("/api/settings/mteam/test")
+    tested = client.post("/mpl/api/settings/mteam/test")
 
     assert saved.status_code == 200
     assert saved.json()["headers"] == {"x-api-key": MASKED_VALUE}
@@ -228,7 +228,7 @@ def test_qbittorrent_settings_are_masked(client) -> None:
     _login(client)
 
     response = client.put(
-        "/api/settings/qbittorrent",
+        "/mpl/api/settings/qbittorrent",
         json={
             "base_url": "http://qb:8080",
             "username": "admin",
@@ -246,7 +246,7 @@ def test_qbittorrent_settings_require_credentials(client) -> None:
     _login(client)
 
     response = client.put(
-        "/api/settings/qbittorrent",
+        "/mpl/api/settings/qbittorrent",
         json={"base_url": "http://qb:8080"},
     )
 
@@ -258,7 +258,7 @@ def test_qbittorrent_validation_error_does_not_echo_oversized_password(client) -
     sensitive_password = "unique-qb-password-secret-" + "x" * 500
 
     response = client.put(
-        "/api/settings/qbittorrent",
+        "/mpl/api/settings/qbittorrent",
         json={
             "base_url": "http://qb:8080",
             "username": "admin",
@@ -276,7 +276,7 @@ def test_qbittorrent_validation_error_does_not_echo_invalid_api_key(client) -> N
     sensitive_api_key = 246_813_579
 
     response = client.put(
-        "/api/settings/qbittorrent",
+        "/mpl/api/settings/qbittorrent",
         json={
             "base_url": "http://qb:8080",
             "username": None,
@@ -292,7 +292,7 @@ def test_qbittorrent_validation_error_does_not_echo_invalid_api_key(client) -> N
 def test_connection_test_requires_saved_configuration(client) -> None:
     _login(client)
 
-    response = client.post("/api/settings/mteam/test")
+    response = client.post("/mpl/api/settings/mteam/test")
 
     assert response.status_code == 422
     assert response.json() == {"detail": "连接尚未配置"}
@@ -312,10 +312,10 @@ def test_download_defaults_can_be_configured(client) -> None:
         "start": False,
     }
     saved = client.put(
-        "/api/settings/downloads",
+        "/mpl/api/settings/downloads",
         json=expected,
     )
-    loaded = client.get("/api/settings/downloads")
+    loaded = client.get("/mpl/api/settings/downloads")
 
     assert saved.status_code == 200
     assert saved.json() == expected
@@ -334,7 +334,7 @@ def test_download_defaults_reject_relative_path(client, path_key: str) -> None:
     save_paths[path_key] = "relative/downloads"
 
     response = client.put(
-        "/api/settings/downloads",
+        "/mpl/api/settings/downloads",
         json={
             "category": "media",
             "save_path": "/downloads",
@@ -358,7 +358,7 @@ def test_legacy_download_defaults_fill_all_save_paths(client) -> None:
         {"category": "legacy", "save_path": "/legacy/downloads", "start": False},
     )
 
-    response = client.get("/api/settings/downloads")
+    response = client.get("/mpl/api/settings/downloads")
 
     assert response.status_code == 200
     assert response.json() == {
@@ -376,7 +376,7 @@ def test_legacy_download_defaults_fill_all_save_paths(client) -> None:
 def test_unconfigured_download_defaults_return_safe_defaults(client) -> None:
     _login(client)
 
-    response = client.get("/api/settings/downloads")
+    response = client.get("/mpl/api/settings/downloads")
 
     assert response.status_code == 200
     assert response.json() == {
@@ -392,7 +392,7 @@ def test_unconfigured_download_defaults_return_safe_defaults(client) -> None:
 
 
 def test_checkin_settings_require_session(client) -> None:
-    response = client.get("/api/settings/mteam/checkin")
+    response = client.get("/mpl/api/settings/mteam/checkin")
 
     assert response.status_code == 401
 
@@ -407,7 +407,7 @@ def test_checkin_dependency_returns_application_singleton(client) -> None:
 def test_unconfigured_checkin_settings_return_defaults(client) -> None:
     _login(client)
 
-    response = client.get("/api/settings/mteam/checkin")
+    response = client.get("/mpl/api/settings/mteam/checkin")
 
     assert response.status_code == 200
     assert response.json() == {
@@ -424,10 +424,10 @@ def test_checkin_settings_can_be_saved_and_loaded(client) -> None:
     _login(client)
 
     saved = client.put(
-        "/api/settings/mteam/checkin",
+        "/mpl/api/settings/mteam/checkin",
         json={"enabled": True, "execution_time": "07:05"},
     )
-    loaded = client.get("/api/settings/mteam/checkin")
+    loaded = client.get("/mpl/api/settings/mteam/checkin")
 
     expected = {
         "enabled": True,
@@ -447,7 +447,7 @@ def test_checkin_settings_keep_default_validation_input(client) -> None:
     invalid_time = "sensitive-invalid-time"
 
     response = client.put(
-        "/api/settings/mteam/checkin",
+        "/mpl/api/settings/mteam/checkin",
         json={"enabled": True, "execution_time": invalid_time},
     )
 
@@ -476,7 +476,7 @@ def test_updating_checkin_settings_preserves_runtime_status(client) -> None:
     )
 
     response = client.put(
-        "/api/settings/mteam/checkin",
+        "/mpl/api/settings/mteam/checkin",
         json={"enabled": False, "execution_time": "10:30"},
     )
 
@@ -501,7 +501,7 @@ def test_successful_mteam_save_wakes_checkin_scheduler(client) -> None:
     client.app.state.checkin_scheduler = scheduler
 
     response = client.put(
-        "/api/settings/mteam",
+        "/mpl/api/settings/mteam",
         json={
             "base_url": "https://m-team.test",
             "headers": {"x-api-key": "secret"},
@@ -519,7 +519,7 @@ def test_failed_mteam_save_does_not_wake_checkin_scheduler(client) -> None:
     client.app.state.checkin_scheduler = scheduler
 
     response = client.put(
-        "/api/settings/mteam",
+        "/mpl/api/settings/mteam",
         json={
             "base_url": "https://m-team.test",
             "headers": {"x-api-key": MASKED_VALUE},
@@ -536,7 +536,7 @@ def test_successful_checkin_save_wakes_checkin_scheduler(client) -> None:
     client.app.state.checkin_scheduler = scheduler
 
     response = client.put(
-        "/api/settings/mteam/checkin",
+        "/mpl/api/settings/mteam/checkin",
         json={"enabled": True, "execution_time": "07:05"},
     )
 
@@ -550,7 +550,7 @@ def test_failed_checkin_save_does_not_wake_checkin_scheduler(client) -> None:
     client.app.state.checkin_scheduler = scheduler
 
     response = client.put(
-        "/api/settings/mteam/checkin",
+        "/mpl/api/settings/mteam/checkin",
         json={"enabled": True, "execution_time": "invalid"},
     )
 

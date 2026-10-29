@@ -69,8 +69,8 @@ class DownloadServiceStub:
 
 
 def _login(client) -> None:
-    client.post("/api/auth/setup", json={"password": "correct horse battery"})
-    client.post("/api/auth/login", json={"password": "correct horse battery"})
+    client.post("/mpl/api/auth/setup", json={"password": "correct horse battery"})
+    client.post("/mpl/api/auth/login", json={"password": "correct horse battery"})
 
 
 def test_download_api_creates_task(client) -> None:
@@ -78,7 +78,7 @@ def test_download_api_creates_task(client) -> None:
     client.app.dependency_overrides[get_download_service] = lambda: DownloadServiceStub()
 
     response = client.post(
-        "/api/downloads",
+        "/mpl/api/downloads",
         json={
             "source_token": "source-7",
             "category": "movies",
@@ -94,10 +94,10 @@ def test_download_api_creates_task(client) -> None:
 def test_download_api_does_not_expose_delete(client) -> None:
     _login(client)
 
-    response = client.delete("/api/downloads/1")
+    response = client.delete("/mpl/api/downloads/1")
 
     assert response.status_code in {404, 405}
     assert not any(
-        route.path.startswith("/api/downloads") and "DELETE" in route.methods
+        route.path.startswith("/mpl/api/downloads") and "DELETE" in route.methods
         for route in client.app.routes
     )

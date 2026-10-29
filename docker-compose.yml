@@ -7,14 +7,23 @@ services:
     ports:
       - "${APP_PORT:-8000}:8000"
     environment:
-      DATABASE_URL: sqlite:////data/movie-pilot-lite.db
+      # 在 .env 中设置，例如：
+      # DATABASE_URL=mysql+pymysql://root:密码@host.docker.internal:3306/movie_pilot_lite?charset=utf8mb4
+      DATABASE_URL: ${DATABASE_URL:?请在 .env 中设置 DATABASE_URL（MySQL 连接地址）}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       TZ: ${TZ:-Asia/Shanghai}
       HTTP_PROXY: ${HTTP_PROXY:-}
       HTTPS_PROXY: ${HTTPS_PROXY:-}
-      NO_PROXY: ${NO_PROXY:-localhost,127.0.0.1,qbittorrent}
-    volumes:
-      - ./data:/data
+      NO_PROXY: ${NO_PROXY:-localhost,127.0.0.1,qbittorrent,video-grab}
+      # 视频下载：转发给 ymc-pub compose 里的 video-grab 服务（令牌与 ymc-pub/.env 的 VIDEO_GRAB_TOKEN 相同）
+      VIDEO_GRAB_URL: ${VIDEO_GRAB_URL:-http://video-grab:8095}
+      VIDEO_GRAB_TOKEN: ${VIDEO_GRAB_TOKEN:-}
+    extra_hosts:
+      # 让容器内通过 host.docker.internal 访问宿主机上发布的 MySQL（3306 端口）。
+      - "host.docker.internal:host-gateway"
+    networks:
+      - default
+      - ymc-pub
     healthcheck:
       test: ["CMD", "python", "/app/docker/healthcheck.py"]
       interval: 30s
@@ -22,3 +31,8 @@ services:
       retries: 3
       start_period: 15s
 
+networks:
+  # video-grab 只在 ymc-pub 的 compose 网络内可达
+  ymc-pub:
+    name: ymc-pub_default
+    external: true
